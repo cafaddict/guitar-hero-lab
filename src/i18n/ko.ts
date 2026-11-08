@@ -86,7 +86,7 @@ export const ko = {
     itemMinutes: (minutes: number) => `${minutes}분`,
     start: '연습 시작',
     doneToday: '오늘 연습을 마쳤어요. 잘했어요!',
-    splitHalfDone: '앞 절반을 마쳤어요. 나머지는 위의 "이어서 하기"로 해요.',
+    splitHalfDone: '나눠 한 앞부분을 마쳤어요. 나머지는 위의 "이어서 하기"로 해요.',
     examLine: (item: string) => `졸업 시험 · ${item}번 항목`,
     again: '한 번 더 하기',
     doneItems: '오늘 한 연습',
@@ -187,7 +187,7 @@ export const ko = {
       `초급 2 수료! 축하해요.${at === null ? '' : ` (${new Date(at).toLocaleDateString('ko-KR')})`} 이제 레퍼토리·복습·약점 위주로 이어 가요.`,
     completeBeginner2: 'Stage 11 기준을 모두 채웠어요! 초급 2 수료를 기록할까요?',
     completeBeginner2Yes: '수료 기록하기',
-    splitResume: '오늘 나눠 한 세션의 남은 절반이 있어요.',
+    splitResume: '오늘 나눠 한 세션의 남은 부분이 있어요.',
     resumeSession: '이어서 하기',
   },
   rules: {
@@ -368,7 +368,8 @@ export const ko = {
     resume: '계속하기',
     paused: '일시정지 중',
     end: '세션 끝내기',
-    splitPoint: '앞 절반 끝 — 30분 루틴은 여기서 나눠 해도 돼요. 오늘 안에 홈에서 이어서 할 수 있어요.',
+    splitPoint:
+      '앞 절반 끝 — 30분 루틴은 여기서 나눠 하기 좋아요. "여기서 나눠 하기"는 블록 사이 어디서나 되고, 오늘 안에 홈에서 이어서 할 수 있어요.',
     splitHere: '여기서 나눠 하기',
     finishRunFirst:
       '건너뛰기와 세션 끝내기는 연습이 끝나면 할 수 있어요. 지금 그만두려면 Esc를 두 번 누르거나 "중단"을 눌러요. "이전 항목"(←)은 이 연습을 끝내고 돌아가요.',

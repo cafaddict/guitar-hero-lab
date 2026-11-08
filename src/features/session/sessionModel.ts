@@ -182,26 +182,58 @@ export function sessionKeyCommand(
   return null;
 }
 
-// --- split 30-minute sessions (SPEC v1.1 §7.3-11) --------------------------------------------------------------
+// --- split 30-minute sessions (SPEC v1.1 §7.3-11, D-104) ------------------------------------------------------
 
-/** The first half of a split session: what "이어서 하기" resumes on the same day (stored under `meta`). */
+/**
+ * The part of a split session done so far: what "이어서 하기" resumes on the same day (stored under `meta`). A
+ * session can be split again while its later part runs, so the record always holds the whole session's items and
+ * the runner state at the next item to do (records written before D-104 — one split, the first half — read the
+ * same way).
+ */
 export interface SplitResume {
   sessionId: string;
-  /** Local day of the first half (`dayKey`); the resume option disappears once the day changes. */
+  /** Local day of the last split (`dayKey`); the resume option disappears once the day changes. */
   day: string;
   stage: number;
   items: RoutineItem[];
-  /** Runner state paused at the first item of the second half. */
+  /** Runner state paused at the first item of the part still to do. */
   state: SessionState;
 }
 
 export const SPLIT_RESUME_KEY = 'splitResume';
 
-/** The runner stands at the first item after the template's split point (the rhythm block is done). */
+/** The runner stands at the first item after the template's suggested split point (the rhythm block is done). */
 export function atSplitPoint(state: SessionState, splitAfterIndex: number | null): boolean {
   return splitAfterIndex !== null && state.index === splitAfterIndex + 1;
 }
 
+/**
+ * The item at `index` opens a block and a block ends right before it: a place between blocks (rests belong to
+ * the block around them, as for the transition screen, §7.3-13).
+ */
+export function atBlockBoundary(items: readonly RoutineItem[], index: number): boolean {
+  return index > 0 && index < items.length && opensNewBlock(items[index - 1], items[index]);
+}
+
+/**
+ * "여기서 나눠 하기" is offered between blocks only (D-104): in a splittable session (Stage 8–11 30-minute
+ * routine), when the last item of a block is behind and the next block remains — never inside a block.
+ * `currentDone`: the current item's run has ended (its result is showing), so the split would come after it.
+ */
+export function canSplit(
+  state: SessionState,
+  items: readonly RoutineItem[],
+  splittable: boolean,
+  currentDone = false,
+): boolean {
+  if (!splittable || isFinished(state, items)) return false;
+  return atBlockBoundary(items, currentDone ? state.index + 1 : state.index);
+}
+
+/**
+ * Keeps the session for later today, paused at the next item to do. `currentDone`: the current item's run has
+ * ended (its result is showing), so the kept part starts after it.
+ */
 export function splitHere(
   sessionId: string,
   day: string,
@@ -209,11 +241,13 @@ export function splitHere(
   items: readonly RoutineItem[],
   state: SessionState,
   now: number,
+  currentDone = false,
 ): SplitResume {
-  return { sessionId, day, stage, items: [...items], state: pause(state, now) };
+  const at = currentDone ? completeItem(state, items, now) : state;
+  return { sessionId, day, stage, items: [...items], state: pause(at, now) };
 }
 
-/** Continues the second half: same items and records, the practice time kept, a fresh clock. */
+/** Continues the kept part: same items and records, the practice time kept, a fresh clock. */
 export function resumeSplit(saved: SessionState, now: number): SessionState {
   return { ...saved, paused: false, runningSince: now, itemStartedAtMs: saved.practiceMs };
 }

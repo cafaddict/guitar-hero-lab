@@ -12,6 +12,7 @@ import {
   acknowledgeBreak,
   atSplitPoint,
   breakDue,
+  canSplit,
   completeItem,
   holdClock,
   isFinished,
@@ -27,6 +28,7 @@ import {
   restartItemClock,
   resume,
   resumeSplit,
+  type SessionState,
   sessionKeyCommand,
   skipItem,
   splitHere,
@@ -303,6 +305,85 @@ describe('SPEC v1.1 §7.3-11 split sessions', () => {
     const resumed = resumeSplit(saved.state, 5_000);
     expect(resumed).toMatchObject({ paused: false, runningSince: 5_000, index: 2, recorded: ['i0', 'i1'] });
     expect(practiceMs(resumed, 65_000)).toBe(190_000);
+  });
+});
+
+describe('D-104 split between blocks only, more than once', () => {
+  // Blocks as a Stage 8 routine lays them out: tuning | newChord ×2 | changes, rest, changes | rhythm | song.
+  const layout: readonly [RoutineItem['block'], string][] = [
+    ['tuning', 'E0'],
+    ['newChord', 'E1'],
+    ['newChord', 'E1'],
+    ['changes', 'E2'],
+    ['rest', 'REST'],
+    ['changes', 'E3'],
+    ['rhythm', 'E5'],
+    ['song', 'S'],
+  ];
+  const items = layout.map(
+    ([block, exerciseType], k) => ({ id: `i${k}`, block, exerciseType }) as RoutineItem,
+  );
+  const at = (index: number): SessionState => ({ ...startSession(0), index });
+
+  it('test_canSplit_splittableSessionAtEachBlockStart_offered', () => {
+    for (const index of [1, 3, 6, 7]) expect(canSplit(at(index), items, true), `index ${index}`).toBe(true);
+  });
+
+  it('test_canSplit_insideABlockOrAroundItsRests_notOffered', () => {
+    // 0: nothing behind; 2: between two new chords; 4, 5: the rest inside the changes block.
+    for (const index of [0, 2, 4, 5]) expect(canSplit(at(index), items, true), `index ${index}`).toBe(false);
+  });
+
+  it('test_canSplit_sessionFinished_notOffered', () => {
+    expect(canSplit(at(items.length), items, true)).toBe(false);
+  });
+
+  it('test_canSplit_resultShowingOnABlocksLastItem_offered', () => {
+    // i2 is the last new chord; its result is showing, so the kept part would start at the changes block.
+    expect(canSplit(at(2), items, true, true)).toBe(true);
+  });
+
+  it('test_canSplit_resultShowingInsideABlock_notOffered', () => {
+    // i1 opens the newChord block, but with its result showing the split would fall between i1 and i2.
+    expect(canSplit(at(1), items, true, true)).toBe(false);
+  });
+
+  it('test_canSplit_resultShowingOnTheLastItem_notOffered', () => {
+    expect(canSplit(at(items.length - 1), items, true, true)).toBe(false);
+  });
+
+  it('test_canSplit_notSplittableSession_neverOffered', () => {
+    for (let index = 0; index <= items.length; index++) expect(canSplit(at(index), items, false)).toBe(false);
+  });
+
+  it('test_splitHere_currentRunEnded_keptPartStartsAtTheNextItem', () => {
+    const state = markRecorded(at(2), 'i2');
+    const saved = splitHere('s', '2026-11-08', 9, items, state, 5000, true);
+    expect(saved.state).toMatchObject({ index: 3, done: ['i2'], recorded: ['i2'], paused: true });
+  });
+
+  it('test_splitHere_threePartsAtBlockBoundaries_sameRecordsAndPracticeTimeCarryThrough', () => {
+    // Part 1: tuning and both new chords, split before the changes block.
+    let state = completeItem(markRecorded(startSession(0), 'i0'), items, 60_000);
+    state = completeItem(state, items, 80_000);
+    state = completeItem(state, items, 100_000);
+    expect(canSplit(state, items, true)).toBe(true);
+    const first = splitHere('s', '2026-11-08', 9, items, state, 100_000);
+    // Part 2: resumed, the changes block (with its rest) done, split again before rhythm.
+    state = resumeSplit(first.state, 1_000_000);
+    state = completeItem(markRecorded(state, 'i3'), items, 1_010_000);
+    expect(canSplit(state, items, true)).toBe(false);
+    state = completeItem(state, items, 1_020_000);
+    state = completeItem(state, items, 1_030_000);
+    expect(canSplit(state, items, true)).toBe(true);
+    const second = splitHere(first.sessionId, '2026-11-08', 9, first.items, state, 1_030_000);
+    expect(second.state).toMatchObject({ index: 6, recorded: ['i0', 'i3'], practiceMs: 130_000 });
+    // Part 3: resumed to the end.
+    state = resumeSplit(second.state, 2_000_000);
+    for (let k = 6; k < items.length; k++) state = completeItem(state, items, 2_000_000 + (k - 5) * 10_000);
+    expect(isFinished(state, items)).toBe(true);
+    expect(practiceMs(state, 2_020_000)).toBe(150_000);
+    expect(second.sessionId).toBe('s');
   });
 });
 

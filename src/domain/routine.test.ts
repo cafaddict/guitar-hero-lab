@@ -679,3 +679,62 @@ describe("D-099: the stage's never-played chords open the session (SPEC v1.1 §7
     expect(introNotice(plan)).toBeUndefined();
   });
 });
+
+describe('D-104 which sessions can be split (§7.3-11)', () => {
+  const thirty = { sessionMinutes: 30, confirmedOverCap: true, firstPracticeAt: NOW - 60 * DAY_MS } as const;
+
+  it('test_generateRoutine_stage8to11ThirtyMinutes_offersASplit', () => {
+    for (const stage of [8, 9, 10, 11]) {
+      const plan = generateRoutine(input({ stage, gVoicing: 'G-4f', ...thirty }));
+      expect(plan.splitAfterIndex, `stage ${stage}`).not.toBeNull();
+    }
+  });
+
+  it('test_generateRoutine_stage0to7TwentyMinutes_offersNoSplit', () => {
+    for (let stage = 0; stage <= 7; stage++) {
+      const plan = generateRoutine(input({ stage, gVoicing: stage >= 7 ? 'G-4f' : 'G-2f' }));
+      expect(plan.splitAfterIndex, `stage ${stage}`).toBeNull();
+    }
+  });
+
+  it('test_generateRoutine_stage8WithUserTemplate_offersNoSplit', () => {
+    const plan = generateRoutine(
+      input({
+        stage: 8,
+        gVoicing: 'G-4f',
+        ...thirty,
+        userTemplate: {
+          id: 'user-8',
+          source: 'user',
+          stage: 8,
+          name: '',
+          createdAt: NOW,
+          items: [
+            {
+              id: 'r01',
+              exerciseType: 'E0',
+              params: {},
+              durationSec: 60,
+              block: 'tuning',
+              slot: JSON.stringify({ kind: 'tuning' }),
+            },
+          ],
+        },
+      }),
+    );
+    expect(plan.splitAfterIndex).toBeNull();
+  });
+
+  it('test_generateRoutine_restDayAtStage9_offersNoSplit', () => {
+    const plan = generateRoutine(
+      input({
+        stage: 9,
+        gVoicing: 'G-4f',
+        ...thirty,
+        lastSelfReport: { pain: 2, dangerFlags: ['numbness'], difficulty: 3, note: '' },
+      }),
+    );
+    expect(plan.kind).toBe('rest');
+    expect(plan.splitAfterIndex).toBeNull();
+  });
+});

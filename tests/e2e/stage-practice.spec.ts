@@ -65,7 +65,11 @@ test('E2E-23: exercises picked on another stage run as one session filed under t
   await page.getByTestId('stage-practice-start').click();
   await expect(page.getByTestId('session-header')).toBeVisible();
   const played: string[] = [];
-  while (await page.getByTestId('session-header').isVisible()) played.push(await playItem(page));
+  while (await page.getByTestId('session-header').isVisible()) {
+    // A curriculum session (routineId custom) is never split (D-104).
+    await expect(page.getByTestId('split-session')).toHaveCount(0);
+    played.push(await playItem(page));
+  }
   expect(played).toEqual(['K1', 'Q1']);
   await pressOn(page, 'report-save');
   await expect(page).toHaveURL(/#\/$/);

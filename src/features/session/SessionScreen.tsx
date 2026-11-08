@@ -36,6 +36,7 @@ import {
   atSplitPoint,
   BLOCK_TRANSITION_MS,
   breakDue,
+  canSplit,
   completeItem,
   holdClock,
   isFinished,
@@ -69,7 +70,9 @@ interface Loaded {
   stage: number;
   content: ContentContext;
   rest: boolean;
-  /** Last item of the first half when the session may be split here (Stage 8–11, §7.3-11), else null. */
+  /** "여기서 나눠 하기" is offered between items (Stage 8–11 30-minute routine, §7.3-11, D-104). */
+  splittable: boolean;
+  /** The template's suggested split point (last item of the rhythm block), shown as a hint, else null. */
   splitAfterIndex: number | null;
   /** What the repertoire block cycles through (§11.10 "차례로 친다"). */
   repertoire: Pick<RoutineInput, 'songs' | 'stage' | 'skills'>;
@@ -262,6 +265,8 @@ export function SessionScreen() {
           stage: split.stage,
           content: contentContextFor(resumed.progression),
           rest: false,
+          // A resumed part can be split again (D-104); the suggested point is behind it.
+          splittable: true,
           splitAfterIndex: null,
           repertoire: { songs: resumed.songs, stage: split.stage, skills: resumed.skills },
         });
@@ -284,6 +289,7 @@ export function SessionScreen() {
           stage: custom.stage,
           content: stageContent(stored, custom.stage),
           rest: false,
+          splittable: false,
           splitAfterIndex: null,
           repertoire: { songs: stored.songs, stage: custom.stage, skills: stored.skills },
         });
@@ -320,6 +326,7 @@ export function SessionScreen() {
         stage: stored.progression.stage,
         content: contentContextFor(stored.progression),
         rest: plan.kind === 'rest',
+        splittable: plan.kind !== 'rest' && plan.splitAfterIndex !== null,
         splitAfterIndex: plan.kind === 'rest' ? null : plan.splitAfterIndex,
         repertoire: { songs: stored.songs, stage: stored.progression.stage, skills: stored.skills },
       });
@@ -534,12 +541,23 @@ export function SessionScreen() {
     navigate('/');
   };
 
-  /** "여기서 나눠 하기": keep the second half for later today; the session stays open until it ends (§7.3-11). */
+  /**
+   * "여기서 나눠 하기" at the boundary the user picked: keep the rest for later today; the session stays open until
+   * it ends (§7.3-11). A resumed part replaces its own record, so a session splits as often as wanted (D-104).
+   */
   const splitSession = async () => {
     if (!state || !sessionId || !loaded) return;
     await repo.setMeta(
       SPLIT_RESUME_KEY,
-      splitHere(sessionId, dayKey(Date.now()), loaded.stage, loaded.items, state, now()),
+      splitHere(
+        sessionId,
+        dayKey(Date.now()),
+        loaded.stage,
+        loaded.items,
+        state,
+        now(),
+        endedIndex === state.index,
+      ),
     );
     navigate('/');
   };
@@ -801,18 +819,21 @@ export function SessionScreen() {
         >
           {ko.session.end}
         </Button>
-      </div>
-      {!runActive && atSplitPoint(state, loaded.splitAfterIndex) && (
-        <Card tone="notice" className="mt-4" data-testid="split-point">
-          <p>{ko.session.splitPoint}</p>
+        {/* Any place between blocks can be the split point (D-104); the template's suggestion is a hint below. */}
+        {canSplit(state, items, loaded.splittable, endedIndex === state.index) && (
           <Button
-            className="mt-2"
             variant="secondary"
+            disabled={runActive}
             onClick={() => void splitSession()}
             data-testid="split-session"
           >
             {ko.session.splitHere}
           </Button>
+        )}
+      </div>
+      {!runActive && loaded.splittable && atSplitPoint(state, loaded.splitAfterIndex) && (
+        <Card tone="notice" className="mt-4" data-testid="split-point">
+          <p>{ko.session.splitPoint}</p>
         </Card>
       )}
       {runActive && <p className="mt-2 text-muted">{ko.session.finishRunFirst}</p>}

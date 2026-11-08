@@ -22,7 +22,7 @@ async function skipUntil(page: Page, until: () => Promise<boolean>): Promise<voi
   expect(await until()).toBe(true);
 }
 
-test('E2E-18: a Stage 8 30-minute routine with the keyboard — repertoire first, split, "이어서 하기", one session', async ({
+test('E2E-18: a Stage 8 30-minute routine with the keyboard — repertoire first, split twice between blocks, "이어서 하기", one session', async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -52,34 +52,57 @@ test('E2E-18: a Stage 8 30-minute routine with the keyboard — repertoire first
   await page.goto('/#/session?timeScale=0.25');
   await expect(header(page)).toBeVisible();
   const total = Number(await header(page).getAttribute('data-count'));
+  // Nothing is behind the first item yet: no split there.
+  await expect(page.getByTestId('split-session')).toHaveCount(0);
   // Tuning, the stage's five never-played chords (D-099), then the repertoire block (Stage 7+ warm-up, §7.3-2).
   await expect(header(page)).toHaveAttribute('data-item-type', 'E0');
   expect(await playItem(page)).toBe('E0');
   await expect(header(page)).toHaveAttribute('data-block', 'newChord');
+  await expect(header(page)).toHaveAttribute('data-index', '1');
+  // Tuning is behind and the newChord block starts: a place between blocks (D-104).
+  await expect(page.getByTestId('split-session')).toBeVisible();
+  // Inside the newChord block (between two new chords) there is no split.
+  await pressOn(page, 'skip-item');
+  await expect(header(page)).toHaveAttribute('data-index', '2');
+  await expect(header(page)).toHaveAttribute('data-block', 'newChord');
+  await expect(page.getByTestId('split-session')).toHaveCount(0);
   await skipUntil(page, async () => (await header(page).getAttribute('data-block')) === 'repertoire');
   await expect(header(page)).toHaveAttribute('data-index', '6');
 
-  // The split point comes after the rhythm block (§7.3-11).
-  await skipUntil(page, () => page.getByTestId('split-point').isVisible());
-  const splitIndex = Number(await header(page).getAttribute('data-index'));
-  expect(splitIndex).toBeGreaterThan(2);
-  expect(splitIndex).toBeLessThan(total - 1);
+  // Part 1 ends between blocks the user picks (D-104): before the repertoire block, not the template's point.
+  await expect(page.getByTestId('split-point')).toHaveCount(0);
   await pressOn(page, 'split-session');
   await expect(page).toHaveURL(/#\/$/);
   let sessions = await readStore<StoredSession>(page, 'sessions');
   expect(sessions).toHaveLength(1);
   expect(sessions[0]!.endedAt).toBeNull();
 
-  // Same day: home offers the rest; it continues at the split point.
+  // Same day: home offers the rest; it continues at the picked boundary.
   await pressOn(page, 'resume-session');
-  await expect(header(page)).toHaveAttribute('data-index', String(splitIndex));
-  await expect(page.getByTestId('split-point')).toHaveCount(0);
-  // Leaving in the middle of the second half keeps its progress: "이어서 하기" comes back where it was left.
+  await expect(header(page)).toHaveAttribute('data-index', '6');
+  // Leaving in the middle of a resumed part keeps its progress: "이어서 하기" comes back where it was left.
   await pressOn(page, 'skip-item');
-  await expect(header(page)).toHaveAttribute('data-index', String(splitIndex + 1));
+  await expect(header(page)).toHaveAttribute('data-index', '7');
   await page.goto('/#/');
   await pressOn(page, 'resume-session');
-  await expect(header(page)).toHaveAttribute('data-index', String(splitIndex + 1));
+  await expect(header(page)).toHaveAttribute('data-index', '7');
+
+  // The changes block's 30-second rest is inside the block: no split there.
+  await skipUntil(page, async () => (await header(page).getAttribute('data-block')) === 'rest');
+  await expect(page.getByTestId('split-session')).toHaveCount(0);
+  // Part 2 is split again between the changes and rhythm blocks: a third part (D-104).
+  await skipUntil(page, async () => (await header(page).getAttribute('data-block')) === 'rhythm');
+  const secondSplit = Number(await header(page).getAttribute('data-index'));
+  expect(secondSplit).toBeLessThan(total - 1);
+  await expect(page.getByTestId('split-point')).toHaveCount(0);
+  await pressOn(page, 'split-session');
+  await expect(page).toHaveURL(/#\/$/);
+  sessions = await readStore<StoredSession>(page, 'sessions');
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]!.endedAt).toBeNull();
+  await expect(page.getByTestId('split-resume')).toBeVisible();
+  await pressOn(page, 'resume-session');
+  await expect(header(page)).toHaveAttribute('data-index', String(secondSplit));
   await skipUntil(page, async () => Number(await header(page).getAttribute('data-index')) === total - 1);
   // The last item is the song block: play it (learn stage, no microphone).
   await expect(header(page)).toHaveAttribute('data-item-type', 'S');
@@ -98,7 +121,7 @@ test('E2E-18: a Stage 8 30-minute routine with the keyboard — repertoire first
   await pressOn(page, 'report-save');
   await expect(page).toHaveURL(/#\/$/);
   await expect(page.getByTestId('split-resume')).toHaveCount(0);
-  // Both halves are one session record (§7.3-11).
+  // All three parts are one session record, closed once by the self report (§7.3-11, D-104).
   sessions = await readStore<StoredSession>(page, 'sessions');
   expect(sessions).toHaveLength(1);
   expect(sessions[0]!.endedAt).not.toBeNull();

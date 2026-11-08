@@ -26,7 +26,11 @@ test('E2E-15: a Stage 0 session with the keyboard only — self-check cards and 
   await page.goto('/#/session?timeScale=0.25');
   await expect(page.getByTestId('session-header')).toBeVisible();
   const played: string[] = [];
-  while (await page.getByTestId('session-header').isVisible()) played.push(await playItem(page));
+  while (await page.getByTestId('session-header').isVisible()) {
+    // A 20-minute Stage 0 session is never split (D-104).
+    await expect(page.getByTestId('split-session')).toHaveCount(0);
+    played.push(await playItem(page));
+  }
   expect(played).toContain('K1');
   expect(played).toContain('E16');
   await pressOn(page, 'report-save');
