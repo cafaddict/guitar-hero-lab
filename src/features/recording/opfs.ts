@@ -51,3 +51,50 @@ export async function removeAllFiles(): Promise<void> {
     // Nothing stored, or no file system access: nothing to remove.
   }
 }
+
+/**
+ * Full backup export: reads the audio of each named file. Never throws — a file that is gone or a file system
+ * that cannot be opened (no OPFS, or `getDirectory` rejecting as in Playwright WebKit) lands in `missing`.
+ */
+export async function readFiles(
+  names: readonly string[],
+): Promise<{ files: { name: string; data: Uint8Array }[]; missing: string[] }> {
+  const files: { name: string; data: Uint8Array }[] = [];
+  const missing: string[] = [];
+  const supported = opfsSupported();
+  for (const name of names) {
+    if (!supported) {
+      missing.push(name);
+      continue;
+    }
+    try {
+      files.push({ name, data: await readFile(name) });
+    } catch {
+      missing.push(name);
+    }
+  }
+  return { files, missing };
+}
+
+/**
+ * Full backup import: writes each file, skipping ones already there unless `overwrite`. Never throws; returns
+ * how many could not be written (no OPFS, quota, a rejected `getDirectory`).
+ */
+export async function saveFiles(
+  files: readonly { name: string; data: Uint8Array }[],
+  overwrite: boolean,
+): Promise<{ saved: number; failed: number }> {
+  if (!opfsSupported()) return { saved: 0, failed: files.length };
+  let saved = 0;
+  let failed = 0;
+  for (const file of files) {
+    try {
+      if (!overwrite && (await fileExists(file.name))) continue;
+      await saveFile(file.name, file.data);
+      saved++;
+    } catch {
+      failed++;
+    }
+  }
+  return { saved, failed };
+}

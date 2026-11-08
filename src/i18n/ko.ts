@@ -598,8 +598,14 @@ export const ko = {
     importReplace: '바꾸기(지금 데이터를 지우고 가져오기)',
     importReplaceConfirm: '정말 지금 데이터를 모두 지우고 바꿀까요? 되돌릴 수 없어요.',
     importDone: '가져왔어요.',
-    importError: '파일을 읽지 못했어요. 이 앱에서 내보낸 JSON 파일인지 확인해 주세요.',
+    importError: '파일을 읽지 못했어요. 이 앱에서 내보낸 JSON 또는 zip 파일인지 확인해 주세요.',
     exported: (name: string) => `${name} 파일로 내보냈어요.`,
+    exportFull: '내보내기(녹음 오디오 포함 zip)',
+    exportedFullWithout: (name: string, n: number) =>
+      `${name} 파일로 내보냈어요. 녹음 ${n}개는 오디오를 읽지 못해 기록만 담았어요(이 브라우저에서 기기 내 저장을 쓸 수 없거나 파일이 없어요).`,
+    importAudio: (n: number) => `녹음 오디오 ${n}개`,
+    importDoneWithoutAudio: (n: number) =>
+      `가져왔어요. 녹음 오디오 ${n}개는 저장하지 못했어요(이 브라우저에서 기기 내 저장을 쓸 수 없어요). 녹음 기록은 가져왔어요.`,
     exportError: '내보내지 못했어요. 저장 공간을 확인하고 다시 해 주세요.',
     lastBackup: (date: string | null) => (date ? `마지막 백업: ${date}` : '아직 백업하지 않았어요.'),
     persist: (granted: boolean) =>

@@ -90,3 +90,103 @@ export function createZip(files: readonly ZipInput[], now = Date.now()): Uint8Ar
   }
   return out;
 }
+
+/** Thrown for anything that is not a zip this app can read (the message is for logs; the UI shows its own). */
+export class ZipError extends Error {
+  override name = 'ZipError';
+}
+
+const LOCAL_SIG = 0x04034b50;
+const CENTRAL_SIG = 0x02014b50;
+const END_SIG = 0x06054b50;
+
+/** True when `bytes` start with a zip local file header ("PK\x03\x04") or an empty archive's end record. */
+export function looksLikeZip(bytes: Uint8Array): boolean {
+  if (bytes.length < 4) return false;
+  const sig = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
+  return sig === LOCAL_SIG || sig === END_SIG;
+}
+
+/**
+ * Reads a "store" method zip (what `createZip` writes) through its central directory. A ZipError rejects:
+ * - an end record on a second disk, with disagreeing entry counts, or whose comment does not end the file;
+ * - a central directory that does not end exactly at the end record, or whose entries do not fill it exactly;
+ * - a local header whose method, flags, name, CRC or sizes differ from its central directory entry;
+ * - a CRC-32 mismatch, compressed entries, ZIP64, encryption and truncated files.
+ * The returned entries are views into `bytes` (no copy).
+ */
+export function readZip(bytes: Uint8Array): ZipInput[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const u16 = (p: number) => view.getUint16(p, true);
+  const u32 = (p: number) => view.getUint32(p, true);
+  let end = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65_557); i--) {
+    if (u32(i) === END_SIG) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) throw new ZipError('zip: end of central directory not found');
+  const disk = u16(end + 4);
+  const centralDisk = u16(end + 6);
+  const diskCount = u16(end + 8);
+  const count = u16(end + 10);
+  const centralSize = u32(end + 12);
+  const centralOffset = u32(end + 16);
+  if (count === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff)
+    throw new ZipError('zip: ZIP64 is not supported');
+  if (disk !== 0 || centralDisk !== 0) throw new ZipError('zip: multi-disk archives are not supported');
+  if (diskCount !== count) throw new ZipError('zip: entry counts in the end record disagree');
+  if (end + 22 + u16(end + 20) !== bytes.length)
+    throw new ZipError('zip: end record comment does not match the file length');
+  if (centralOffset + centralSize !== end) throw new ZipError('zip: central directory out of range');
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const entries: ZipInput[] = [];
+  let p = centralOffset;
+  for (let i = 0; i < count; i++) {
+    if (p + 46 > end || u32(p) !== CENTRAL_SIG) throw new ZipError('zip: bad central directory entry');
+    const flags = u16(p + 8);
+    const method = u16(p + 10);
+    const crc = u32(p + 16);
+    const compressedSize = u32(p + 20);
+    const size = u32(p + 24);
+    const nameLen = u16(p + 28);
+    const extraLen = u16(p + 30);
+    const commentLen = u16(p + 32);
+    const localOffset = u32(p + 42);
+    const next = p + 46 + nameLen + extraLen + commentLen;
+    if (next > end) throw new ZipError('zip: bad central directory entry');
+    const rawName = bytes.subarray(p + 46, p + 46 + nameLen);
+    let name: string;
+    try {
+      name = decoder.decode(rawName);
+    } catch {
+      throw new ZipError('zip: entry name is not UTF-8');
+    }
+    if (flags & 0x0001) throw new ZipError(`zip: ${name} is encrypted`);
+    if (method !== 0 || compressedSize !== size)
+      throw new ZipError(`zip: ${name} is compressed (method ${method}); only stored entries are read`);
+    if (localOffset + 30 > centralOffset || u32(localOffset) !== LOCAL_SIG)
+      throw new ZipError(`zip: ${name}: bad local header`);
+    const localNameLen = u16(localOffset + 26);
+    const start = localOffset + 30 + localNameLen + u16(localOffset + 28);
+    if (start + size > centralOffset) throw new ZipError(`zip: ${name} is truncated`);
+    const localName = bytes.subarray(localOffset + 30, localOffset + 30 + localNameLen);
+    if (
+      u16(localOffset + 6) !== flags ||
+      u16(localOffset + 8) !== method ||
+      u32(localOffset + 14) !== crc ||
+      u32(localOffset + 18) !== compressedSize ||
+      u32(localOffset + 22) !== size ||
+      localNameLen !== nameLen ||
+      localName.some((byte, k) => byte !== rawName[k])
+    )
+      throw new ZipError(`zip: ${name}: local header does not match the central directory`);
+    const data = bytes.subarray(start, start + size);
+    if (crc32(data) !== crc) throw new ZipError(`zip: ${name}: CRC mismatch`);
+    entries.push({ name, data });
+    p = next;
+  }
+  if (p !== end) throw new ZipError('zip: central directory has more bytes than its entry count');
+  return entries;
+}

@@ -4,13 +4,13 @@ import { persistentStorageGranted, requestPersistentStorage } from '../../app/pe
 import { repo } from '../../app/services';
 import { useSettingsStore } from '../../app/settingsStore';
 import { LAST_BACKUP_KEY } from '../../app/storedState';
+import { applyImport, exportAll, exportFileName } from '../../data/exportImport';
 import {
-  applyImport,
-  exportAll,
-  exportFileName,
-  type ImportPreview,
-  parseImport,
-} from '../../data/exportImport';
+  type BackupPreview,
+  createFullBackup,
+  fullBackupFileName,
+  parseBackupFile,
+} from '../../data/fullBackup';
 import { KEY_ACTIONS, type KeyAction, type Settings } from '../../data/settings';
 import { dayKey } from '../../domain/records';
 import { ko } from '../../i18n/ko';
@@ -19,10 +19,10 @@ import { Card, CardHeader } from '../../ui/Card';
 import { Choice, Field, Select, TextInput } from '../../ui/Field';
 import { Phrases } from '../../ui/Phrases';
 import { Screen } from '../../ui/Screen';
-import { removeAllFiles } from '../recording/opfs';
+import { readFiles, removeAllFiles, saveFiles } from '../recording/opfs';
 
-function download(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+function download(name: string, data: string | Uint8Array, type: string): void {
+  const url = URL.createObjectURL(new Blob([data as BlobPart], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
@@ -91,7 +91,7 @@ function MinutesInput({
 function BackupSection() {
   const [lastBackup, setLastBackup] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [preview, setPreview] = useState<BackupPreview | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [persisted, setPersisted] = useState(persistentStorageGranted());
   const file = useRef<HTMLInputElement>(null);
@@ -102,17 +102,33 @@ function BackupSection() {
     if (persisted === null) void requestPersistentStorage().then(setPersisted);
   }, [persisted]);
 
-  const exportNow = async () => {
+  const exportNow = async (kind: 'json' | 'full') => {
     const now = Date.now();
     // Stored first so the file carries its own backup time; restored if the export fails (no silent reminder).
     const previous = (await repo.getMeta<number>(LAST_BACKUP_KEY)) ?? null;
     await repo.setMeta(LAST_BACKUP_KEY, now);
     try {
       const envelope = await exportAll(repo.db, now);
-      const name = exportFileName(now);
-      download(name, JSON.stringify(envelope));
+      if (kind === 'json') {
+        const name = exportFileName(now);
+        download(name, JSON.stringify(envelope), 'application/json');
+        setLastBackup(now);
+        setMessage(ko.settingsScreen.exported(name));
+        return;
+      }
+      // Audio that cannot be read (no OPFS, or a file gone) leaves only its row in the zip, as in a JSON backup.
+      const names = [...new Set(envelope.tables.recordings.map((r) => r.fileName))].filter(
+        (n): n is string => typeof n === 'string',
+      );
+      const { files, missing } = await readFiles(names);
+      const name = fullBackupFileName(now);
+      download(name, createFullBackup(envelope, files, now), 'application/zip');
       setLastBackup(now);
-      setMessage(ko.settingsScreen.exported(name));
+      setMessage(
+        missing.length > 0
+          ? ko.settingsScreen.exportedFullWithout(name, missing.length)
+          : ko.settingsScreen.exported(name),
+      );
     } catch {
       await repo.setMeta(LAST_BACKUP_KEY, previous);
       setMessage(ko.settingsScreen.exportError);
@@ -121,7 +137,7 @@ function BackupSection() {
 
   const pick = async (f: File) => {
     try {
-      setPreview(parseImport(await f.text()));
+      setPreview(parseBackupFile(new Uint8Array(await f.arrayBuffer())));
       setMessage(null);
     } catch {
       setPreview(null);
@@ -132,10 +148,12 @@ function BackupSection() {
   const apply = async (mode: 'merge' | 'replace') => {
     if (!preview) return;
     await applyImport(repo, preview.envelope, mode);
+    // Merge keeps audio already on this device (같은 키 건너뜀); replace writes the backup's audio over it.
+    const { failed } = await saveFiles(preview.audio, mode === 'replace');
     await load();
     setPreview(null);
     setConfirmReplace(false);
-    setMessage(ko.settingsScreen.importDone);
+    setMessage(failed > 0 ? ko.settingsScreen.importDoneWithoutAudio(failed) : ko.settingsScreen.importDone);
   };
 
   return (
@@ -147,8 +165,11 @@ function BackupSection() {
       {persisted !== null && <p className="text-sm text-muted">{ko.settingsScreen.persist(persisted)}</p>}
       <p className="text-sm text-muted">{ko.settingsScreen.homeScreenTip}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button onClick={() => void exportNow()} data-testid="export-data">
+        <Button onClick={() => void exportNow('json')} data-testid="export-data">
           {ko.settingsScreen.exportData}
+        </Button>
+        <Button variant="secondary" onClick={() => void exportNow('full')} data-testid="export-full">
+          {ko.settingsScreen.exportFull}
         </Button>
         <Button variant="secondary" onClick={() => file.current?.click()}>
           {ko.settingsScreen.importData}
@@ -156,7 +177,7 @@ function BackupSection() {
         <input
           ref={file}
           type="file"
-          accept="application/json,.json"
+          accept="application/json,.json,application/zip,.zip"
           className="sr-only"
           // Reached through the "가져오기" button: a 1 px focus stop would show no ring.
           tabIndex={-1}
@@ -176,6 +197,7 @@ function BackupSection() {
               Object.entries(preview.counts)
                 .filter(([, n]) => n > 0)
                 .map(([t, n]) => `${t} ${n}`)
+                .concat(preview.audio.length > 0 ? [ko.settingsScreen.importAudio(preview.audio.length)] : [])
                 .join(', '),
             )}
           </p>
