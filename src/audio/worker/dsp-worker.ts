@@ -333,6 +333,16 @@ function processRange(id: number): void {
           startSample: Math.round(n.time * fs),
         })),
         ...(request.extraSpanS ? { extraSpanS: request.extraSpanS } : {}),
+        ...(request.backing
+          ? {
+              backing: {
+                arrivals: request.backing.arrivalsS.map((a) => Math.round(a * fs)),
+                templateRises: request.backing.templateRises,
+                introCount: 0,
+                gain: request.backing.gain,
+              },
+            }
+          : {}),
       });
       break;
     }

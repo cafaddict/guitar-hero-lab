@@ -224,15 +224,21 @@ export const E10_FIXTURE = {
   leadS: 0.3,
 } as const;
 
-function scaleFixture(): Float32Array {
+/** Notes of E10_FIXTURE's take: cycle `wrongCycle` has its `wrongIndex` note a fret high; `skip` leaves notes out. */
+function scaleFixture(
+  cycles: number = E10_FIXTURE.cycles,
+  wrongCycle: number = E10_FIXTURE.wrongCycle,
+  skip: (cycle: number, k: number) => boolean = () => false,
+): Float32Array {
   const scale = scaleById(E10_FIXTURE.scaleId);
   const order = scaleStepSequence(scale, E10_FIXTURE.step);
   const ioi = 60 / E10_FIXTURE.bpm;
   const notes: SequenceNote[] = [];
-  for (let c = 0; c < E10_FIXTURE.cycles; c++) {
+  for (let c = 0; c < cycles; c++) {
     order.forEach((i, k) => {
+      if (skip(c, k)) return;
       const n = scale.notes[i]!;
-      const wrong = c === E10_FIXTURE.wrongCycle && k === E10_FIXTURE.wrongIndex;
+      const wrong = c === wrongCycle && k === E10_FIXTURE.wrongIndex;
       const fret = n.fret + (wrong ? 1 : 0);
       const index = c * order.length + k;
       notes.push({
@@ -249,6 +255,49 @@ function scaleFixture(): Float32Array {
   }
   const totalS = notes.at(-1)!.time + 1.5;
   return peakNormalize(renderSequence(notes, FS, Math.round(totalS * FS)).signal);
+}
+
+/**
+ * E2E-16b (D-102): E10 "반주와 함께" (Em backing, P0 = a strum on every beat) on speakers. The same Em pentatonic
+ * take as E2E-16, five clean cycles, except that cycle 1 leaves out `skippedIndices` — notes whose pitch class is a
+ * tone of the backing's Em chord (B2 = 5:2, E3 = 4:2), so leaked backing strums on those beats could pass for them.
+ * The backing bleeds in at `bleedRelDb` on the §14.8 backingBleed scale.
+ */
+export const E10_BACKING_FIXTURE = {
+  cycles: 5,
+  skippedCycle: 0,
+  skippedIndices: [3, 5],
+  bleedRelDb: -12,
+} as const;
+
+function scaleBackingFixture(): Float32Array {
+  const f = E10_BACKING_FIXTURE;
+  return scaleFixture(
+    f.cycles,
+    -1,
+    (c, k) => c === f.skippedCycle && (f.skippedIndices as readonly number[]).includes(k),
+  );
+}
+
+/**
+ * Loopback gain that puts the app's E10 backing (Em, P0, the E10 plugin's settings: Karplus-Strong, seed 11)
+ * `E10_BACKING_FIXTURE.bleedRelDb` below the fixture's first note, measured as §14.8 does (first 500 ms RMS).
+ */
+export function e10BleedLoopbackGain(): number {
+  const backing = renderBacking({
+    chords: Array(1 + 32).fill(voicingById('Em')),
+    pattern: patternById('P0'),
+    bpm: E10_FIXTURE.bpm,
+    bars: 1 + 32,
+    sampleRate: FS,
+    model: 'karplus-strong',
+    seed: 11,
+  });
+  const user = scaleBackingFixture();
+  const lead = Math.round(E10_FIXTURE.leadS * FS);
+  const userRms = rms(user, lead, lead + Math.round(0.5 * FS));
+  const backingRms = rms(backing.signal, 0, Math.round(0.5 * FS));
+  return (userRms * 10 ** (E10_BACKING_FIXTURE.bleedRelDb / 20)) / backingRms;
 }
 
 /**
@@ -335,6 +384,7 @@ function main(): void {
   );
   writeFileSync(join(OUT_DIR, 'e5-p3-80.wav'), encodeWav(patternFixture(), FS));
   writeFileSync(join(OUT_DIR, 'e10-em-pent-s1-80.wav'), encodeWav(scaleFixture(), FS));
+  writeFileSync(join(OUT_DIR, 'e10-em-pent-s1-80-skips.wav'), encodeWav(scaleBackingFixture(), FS));
   writeFileSync(join(OUT_DIR, 'song-s01-100-beat1.wav'), encodeWav(songFixture(), FS));
   writeFileSync(join(OUT_DIR, 'q3-strings65.wav'), encodeWav(q3Fixture(), FS));
   console.log(`fixtures written to ${OUT_DIR}`);

@@ -14,7 +14,7 @@ import { DEFAULT_METRONOME_CONFIG } from '../../audio/metronome';
 import type { SequenceCycle } from '../../domain/exerciseResults';
 import { BaseRunner } from '../baseRunner';
 import { Timeline } from '../timeline';
-import type { DspStats, ExerciseContext, RunnerCommand } from '../types';
+import type { DspStats, ExerciseContext, RunnerCommand, SequenceBacking } from '../types';
 import { type CycleOutcome, type PlannedSlot, SequenceTracker } from './tracker';
 
 export interface PlannedNote {
@@ -266,6 +266,11 @@ export abstract class SequenceRunner<R, V extends SequenceView> extends BaseRunn
         // Without a metronome there is no grid to judge against: the run ends without cycles.
         if (!this.isDisposed && this.phase !== 'done') this.setPhase('done');
       });
+  }
+
+  /** Points the judging at a speaker backing's events (D-102); `pending` holds the judging until the gain is set. */
+  protected maskBacking(backing: SequenceBacking | null, pending = false): void {
+    this.tracker?.setBacking(backing, pending);
   }
 
   /** Called once a segment's grid origin (bar 1 after the count-in) is known: the start, and every resume. */

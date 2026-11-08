@@ -45,9 +45,16 @@ function E10ViewComponent({ runner }: { runner: ExerciseRunner<ScaleResult, E10V
       }
       status={
         view.backingAudible && (
-          <p className="text-muted" data-testid="e10-reference">
-            {t.speakerReference}
-          </p>
+          <>
+            <p className="text-muted" data-testid="e10-speaker-note">
+              {t.speakerNote}
+            </p>
+            {view.gainLost && (
+              <p aria-live="polite" data-testid="e10-gain-lost">
+                {t.gainLost}
+              </p>
+            )}
+          </>
         )
       }
     >
@@ -74,8 +81,8 @@ function E10Summary({ result }: { result: ScaleResult; params: E10Params }) {
 
 /** The step and tempo to practise next from this scale's latest runs (newest first). */
 export function nextScaleRun(params: E10Params, recent: readonly ScaleResult[]): E10Params {
-  // Reference runs (backing on speakers, §8.6-3) and reviews of a graduated step (§7.5) do not move the step or
-  // the ladder.
+  // Reference runs (unmasked speaker backing, stored before D-102) and reviews of a graduated step (§7.5) do not
+  // move the step or the ladder.
   const mine = recent.filter((r) => r.scaleId === params.scaleId && r.backingAudible !== true && !r.review);
   // A review plays the step under review (the routine names it) at the graduation tempo (§7.5).
   if (params.review) return { ...params, bpm: SCALE_GRADUATION_BPM };

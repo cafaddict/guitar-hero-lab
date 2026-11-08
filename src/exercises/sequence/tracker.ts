@@ -7,6 +7,10 @@
  *
  * A pause cuts the plan (cutAt, D-085): the cycles it interrupted never complete, and the slots planned after the
  * resume start a new stretch that is judged like the start of a take (nothing reaches back across the gap).
+ *
+ * A speaker backing (E10 "반주와 함께", D-102) goes with every chunk: the backing events inside its audio, so the
+ * worker drops the onsets that are backing bleed. Without a bleed gain no chunk is sent: the slots wait for one
+ * as long as the capture ring can still give their audio back, then count as unclear (not as mistakes).
  */
 import {
   countStops,
@@ -16,7 +20,7 @@ import {
   type NoteStatus,
   type SequenceSlot,
 } from '../../dsp/sequence';
-import type { ExerciseMic, SequenceOutcome } from '../types';
+import type { ExerciseMic, SequenceBacking, SequenceOutcome } from '../types';
 
 export interface PlannedSlot extends SequenceSlot {
   /** Audio-clock seconds the note is expected at (grid + RTT + personal lead). */
@@ -57,6 +61,8 @@ export interface TrackerOptions {
   tailS?: number;
   /** The oldest waiting slot is sent after this long even when the chunk could take more. */
   batchS?: number;
+  /** How long a slot waits for the backing's bleed gain; its chunk must still fit in the ring afterwards. */
+  maxBackingWaitS?: number;
 }
 
 const midiHz = (midi: number) => 440 * 2 ** ((midi - 69) / 12);
@@ -85,7 +91,10 @@ export class SequenceTracker {
   private readonly leadS: number;
   private readonly tailS: number;
   private readonly batchS: number;
+  private readonly maxBackingWaitS: number;
   private ended = false;
+  private backing: SequenceBacking | null = null;
+  private backingPending = false;
 
   constructor(
     private readonly mic: ExerciseMic,
@@ -95,6 +104,16 @@ export class SequenceTracker {
     this.leadS = options.leadS ?? 0.6;
     this.tailS = options.tailS ?? 0.35;
     this.batchS = options.batchS ?? 1;
+    this.maxBackingWaitS = options.maxBackingWaitS ?? 2.5;
+  }
+
+  /**
+   * The speaker backing whose events the chunks from now on mask (null = none). `pending`: its bleed gain is
+   * not known — chunks wait for the next call, and slots that cannot wait any longer turn unclear.
+   */
+  setBacking(backing: SequenceBacking | null, pending = false): void {
+    this.backing = backing;
+    this.backingPending = pending;
   }
 
   /** Appends planned slots (time order). */
@@ -184,6 +203,10 @@ export class SequenceTracker {
   /** Requests the next chunk when its slots are far enough in the past; call on every tick. */
   pump(now: number): void {
     if (this.inFlight || this.next >= this.slots.length) return;
+    if (this.backingPending) {
+      this.giveUpOldSlots(now);
+      return;
+    }
     const first = this.next;
     const head = this.slots[first]!.time;
     // After a pause the stretch starts over like a take: no EXTRA span, earlier notes or chunk across the gap.
@@ -228,6 +251,7 @@ export class SequenceTracker {
     this.inFlight = true;
     this.next = last + 1;
     const to = this.slots[last]!.time + this.tailS;
+    const backing = this.backingIn(from, to);
     void this.mic
       .analyzeSequence({
         from,
@@ -237,6 +261,7 @@ export class SequenceTracker {
         ...(this.options.deltaCents ? { deltaCents: this.options.deltaCents } : {}),
         priorNotes,
         extraSpan: [extraFrom, extraTo],
+        ...(backing ? { backing } : {}),
       })
       .then((outcome) => this.accept(first, outcome, extraTo))
       .catch(() => {
@@ -246,6 +271,30 @@ export class SequenceTracker {
         this.inFlight = false;
         this.settleCycles();
       });
+  }
+
+  /** Without a bleed gain, slots whose audio is about to leave the ring: nothing can judge them any more. */
+  private giveUpOldSlots(now: number): void {
+    const first = this.next;
+    while (this.next < this.slots.length && now - this.slots[this.next]!.time > this.maxBackingWaitS) {
+      this.judged[this.next] = { status: 'UNCLEAR' };
+      this.coveredTo = this.slots[this.next]!.time + this.window(this.next);
+      this.next++;
+    }
+    if (this.next > first) this.settleCycles();
+  }
+
+  /** The backing events whose mask windows reach into [from, to] (a little margin for the re-refinement). */
+  private backingIn(from: number, to: number): SequenceBacking | null {
+    const b = this.backing;
+    if (!b) return null;
+    const margin = 0.1;
+    const inside = b.arrivals.flatMap((t, i) => (t >= from - margin && t <= to + margin ? [i] : []));
+    return {
+      arrivals: inside.map((i) => b.arrivals[i]!),
+      templateRises: inside.map((i) => b.templateRises[i]!),
+      gain: b.gain,
+    };
   }
 
   private accept(first: number, outcome: SequenceOutcome, extraTo: number): void {

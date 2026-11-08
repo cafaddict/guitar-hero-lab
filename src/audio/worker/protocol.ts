@@ -130,6 +130,17 @@ export const rangeRequestSchema = z.discriminatedUnion('kind', [
       )
       .default([]),
     extraSpanS: z.tuple([z.number(), z.number()]).optional(),
+    /**
+     * Speaker backing (E10 "반주와 함께", D-102): event arrivals (s from the range start), their template rises
+     * and the bleed gain from the intro bar; onsets the mask calls bleed are not notes (§10.12).
+     */
+    backing: z
+      .object({
+        arrivalsS: z.array(z.number()),
+        templateRises: z.array(z.number()),
+        gain: z.number().min(0),
+      })
+      .optional(),
   }),
   /** Backing bleed gain from the intro bar (§10.12): arrivals in capture samples, templates of those events. */
   z.object({

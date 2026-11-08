@@ -248,7 +248,10 @@ export const scaleResultSchema = z.object({
   hiddenThroughout: z.boolean(),
   /** "반주와 함께 1단계" option (§11.13 step 6). */
   withBacking: z.boolean(),
-  /** The backing played on speakers (§8.6-3/4): the cycles are shown as reference only and record nothing. */
+  /**
+   * Stored by runs before D-102 only: true = the backing played on speakers without masking — a reference run that
+   * records nothing. Runs since then mask the bleed (D-102), count like any other and leave this out.
+   */
   backingAudible: z.boolean().optional(),
   /** A review run of a graduated step (§7.5): it does not move the scale's step or ladder. */
   review: z.boolean().optional(),
@@ -628,7 +631,7 @@ export const METRIC_EXTRACTORS: Readonly<Record<string, Extractor>> = {
   },
   E10: (raw) => {
     const r = scaleResultSchema.parse(raw);
-    // Backing bleed can pass for the expected notes (no masking on the note path): reference only (§8.6-3).
+    // An unmasked speaker backing run from before D-102: reference only (§8.6-3).
     if (r.backingAudible === true) return [];
     const key = `scale:${r.scaleId}:s${r.step}`;
     const out = [

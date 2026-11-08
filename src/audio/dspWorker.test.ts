@@ -299,6 +299,32 @@ describe('dsp worker — v1.1 requests', () => {
     expect(result.extras).toEqual([]);
   });
 
+  it('test_sequenceRange_withSpeakerBacking_onsetJudgedBleedIsDroppedAndAKeptOneJudged (D-102)', () => {
+    // One A2 pluck at 0.5 s with a backing event arriving there (s from the range start).
+    const take = new Float32Array(Math.round(1.2 * FS));
+    take.set(pluckSegment(midiToHz(45), 40).subarray(0, take.length));
+    const request = (id: number, gain: number) => ({
+      type: 'analyzeRange',
+      id,
+      request: {
+        kind: 'sequence',
+        bpm: 80,
+        slots: [{ time: 0.5, midi: 45, stringIdx: 1, cycle: 0 }],
+        backing: { arrivalsS: [0.5], templateRises: [1], gain },
+      },
+    });
+    const statusOf = (id: number) => {
+      fromCapture({ type: 'range', id, fromSample: 0, copied: take.length, samples: take.slice() });
+      return (lastOf('rangeResult')!.result as { notes: { status: string }[] }).notes[0]!.status;
+    };
+    // A bleed prediction far below the pluck: the user's note is kept and judged.
+    send(request(41, 1e-9));
+    expect(statusOf(41)).toBe('OK');
+    // A huge predicted bleed: the same onset is the backing, the slot has no note.
+    send(request(42, 1e9));
+    expect(statusOf(42)).toBe('MISSED');
+  });
+
   it('pluck with buzz: Mode A plus a beta buzz score; onsets with beta: direction / palm mute / level', () => {
     send({ type: 'job', job: { kind: 'pluck', expectedF0: midiToHz(55), buzz: true } });
     fromCapture({

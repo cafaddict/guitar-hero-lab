@@ -136,6 +136,16 @@ export interface SequenceRequest {
   deltaCents?: readonly number[];
   priorNotes: readonly { f0: number; stringIdx?: number | undefined; time: number }[];
   extraSpan: readonly [number, number];
+  /** Speaker backing events to mask (D-102): arrivals in audio s; without a gain the worker estimates one. */
+  backing?: SequenceBacking;
+}
+
+/** Backing events heard through the microphone (scheduled time + RTT) and the bleed gain (§10.12, D-102). */
+export interface SequenceBacking {
+  arrivals: readonly number[];
+  templateRises: readonly number[];
+  /** Measured on the backing alone: an estimate from a chunk would take the user's notes for the leak. */
+  gain: number;
 }
 
 export interface SequenceOutcome {

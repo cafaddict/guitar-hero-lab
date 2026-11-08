@@ -77,6 +77,15 @@ export function createExerciseMic(engine: AudioEngine): ExerciseMic {
           time: rel(n.time),
         })),
         extraSpanS: [rel(request.extraSpan[0]), rel(request.extraSpan[1])],
+        ...(request.backing
+          ? {
+              backing: {
+                arrivalsS: request.backing.arrivals.map(rel),
+                templateRises: [...request.backing.templateRises],
+                gain: request.backing.gain,
+              },
+            }
+          : {}),
       });
       const result = outcome.result as SequenceResult;
       const fs = engine.sampleRate;

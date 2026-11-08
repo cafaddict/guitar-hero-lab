@@ -28,7 +28,7 @@ import type { ExerciseContext, JudgedEvent, RunnerCommand } from '../types';
 export type BackingRenderer = (chords: readonly string[], patternId: string, bpm: number) => RenderedBacking;
 
 /** Audio kept before each intro event when the bleed gain is measured (pre-rise window + filter settling). */
-const BLEED_PRE_S = 0.1;
+export const BLEED_PRE_S = 0.1;
 /** Longest span the bleed gain is measured over — inside the ~3.9 s capture ring (design value). */
 export const BLEED_WINDOW_S = 3.5;
 

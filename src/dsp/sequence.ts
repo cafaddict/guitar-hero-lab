@@ -12,11 +12,15 @@
  *    When the expected note is a harmonic of a ringing note (octave, twelfth), a harmonic-pass comb keeps
  *    only the shared partials instead of cancelling them.
  * 4. |cents| ≤ 35 → OK, otherwise WRONG_NOTE (semitone difference), clarity < 0.85 → UNCLEAR.
+ * 4a. Speaker backing (E10 "반주와 함께", D-102): with a backing schedule, onset candidates within a backing event's
+ *    arrival ± maskWindowMs that the low-band test (backingMask.ts, §10.12) calls bleed are dropped before
+ *    grouping, so a leaked chord tone can neither fill an unplayed slot nor count as EXTRA.
  * 5. Cycles: flawless when every slot is OK (legato slots may be HAMMER_OK or undetermined) and no EXTRA
  *    falls in the cycle; any UNCLEAR makes it uncertain (not flawless, does not break a streak); otherwise a
  *    mistake. Two or more consecutive MISSED slots count as one stop.
  */
 
+import { type BackingSchedule, backingKeepFlags } from './backingMask';
 import {
   computeFlux,
   DEFAULT_ONSET_PARAMS,
@@ -147,18 +151,32 @@ export interface SequenceInput {
   priorNotes?: readonly RingingNote[];
   /** Only onsets in [from, to] s may be EXTRA (a chunk owns the extras up to its last slot's window). */
   extraSpanS?: readonly [number, number];
+  /** Speaker backing events (samples relative to `samples`) whose bleed onsets are masked (D-102). */
+  backing?: BackingSchedule;
 }
 
-/** Offline sequence onset path: flux → peaks → refinement → grouping (no anticipation suppression). */
+/**
+ * Offline sequence onset path: flux → peaks → refinement → (backing mask) → grouping (no anticipation
+ * suppression).
+ */
 export function detectSequenceOnsets(
   signal: ArrayLike<number>,
   sampleRate: number,
   params: OnsetParams = SEQUENCE_ONSET_PARAMS,
+  backing?: BackingSchedule,
 ): SequenceOnset[] {
   const frames = computeFlux(signal, sampleRate, params);
   const frameLength = Math.round((params.frameMs / 1000) * sampleRate);
-  const candidates: OnsetCandidate[] = pickOnsets(frames, sampleRate, frameLength, params);
-  const refined = candidates.map((c) => refineOnset(signal, c.sample, frameLength, sampleRate, params));
+  let candidates: OnsetCandidate[] = pickOnsets(frames, sampleRate, frameLength, params);
+  let refined = candidates.map((c) => refineOnset(signal, c.sample, frameLength, sampleRate, params));
+  if (backing) {
+    // Same mask as the strum path (detectStrums): a leaked backing strum is not a note the user played.
+    const keep = backingKeepFlags(signal, sampleRate, refined, backing, (i, from) =>
+      refineOnset(signal, candidates[i]!.sample, frameLength, sampleRate, params, from),
+    );
+    candidates = candidates.filter((_, i) => keep[i]);
+    refined = refined.filter((_, i) => keep[i]);
+  }
   const groups = groupStrums(candidates, refined, sampleRate, params.groupMs);
   // groupStrums keeps the first member's coarse sample: recover that member's broadband flag.
   return groups.map((g) => ({
@@ -374,7 +392,9 @@ export function verifySequence(input: SequenceInput): SequenceResult {
   const params = input.params ?? DEFAULT_SEQUENCE_PARAMS;
   const fs = input.sampleRate;
   const slots = input.slots;
-  const onsets = input.onsets ?? detectSequenceOnsets(input.samples, fs, input.onsetParams);
+  const onsets =
+    input.onsets ??
+    detectSequenceOnsets(input.samples, fs, input.onsetParams ?? SEQUENCE_ONSET_PARAMS, input.backing);
   // 1. Matching (greedy by distance).
   const pairs: { slot: number; onset: number; dist: number }[] = [];
   slots.forEach((slot, i) => {

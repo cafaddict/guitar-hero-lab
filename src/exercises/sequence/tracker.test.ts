@@ -87,6 +87,14 @@ function drive(tracker: SequenceTracker, until: number) {
   })();
 }
 
+const pumpTo = async (tracker: SequenceTracker, from: number, to: number) => {
+  for (let t = from; t <= to + 1e-9; t += 0.05) {
+    tracker.pump(t);
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+};
+
 describe('SequenceTracker (SPEC v1.1 §10.10 in chunks)', () => {
   it('judges a long take chunk by chunk exactly like one whole-take verification', async () => {
     const { signal, slots } = scene((i) => (i === 30 ? 'wrong' : i === 40 ? 'skip' : 'play'));
@@ -181,17 +189,76 @@ describe('SequenceTracker (SPEC v1.1 §10.10 in chunks)', () => {
   });
 });
 
+describe('SequenceTracker waiting for the backing bleed gain (D-102)', () => {
+  const slotsAt = (times: readonly number[], cycle: number): PlannedSlot[] =>
+    times.map((time) => ({ time, midi: 40, stringIdx: 5, cycle }));
+  const backing = { arrivals: [1, 2, 3, 4], templateRises: [1, 1, 1, 1], gain: 0.02 };
+
+  it('test_tracker_gainPendingWithinTheWait_noChunkAndSlotsStayWaiting', async () => {
+    const mic = new FakeMic();
+    const tracker = new SequenceTracker(mic, { bpm: 60 });
+    tracker.addSlots(slotsAt([1, 2], 0));
+    tracker.setBacking(null, true);
+
+    await pumpTo(tracker, 0, 3.4);
+
+    expect(mic.sequenceRequests).toEqual([]);
+    expect(tracker.cycles()).toEqual([]);
+    expect(tracker.idle).toBe(false);
+  });
+
+  it('test_tracker_gainPendingPastTheWait_slotsTurnUnclearAndTheCycleIsUncertain', async () => {
+    const mic = new FakeMic();
+    const tracker = new SequenceTracker(mic, { bpm: 60 });
+    tracker.addSlots(slotsAt([1, 2], 0));
+    tracker.setBacking(null, true);
+
+    await pumpTo(tracker, 0, 6);
+
+    expect(mic.sequenceRequests).toEqual([]);
+    expect(tracker.idle).toBe(true);
+    expect(tracker.cycles()[0]).toMatchObject({ flawless: false, uncertain: true });
+    expect(tracker.cycles()[0]!.notes.map((n) => n.status)).toEqual(['UNCLEAR', 'UNCLEAR']);
+  });
+
+  it('test_tracker_gainArrivesInTheWait_waitingSlotsGoOutWithTheGain', async () => {
+    const mic = new FakeMic();
+    const tracker = new SequenceTracker(mic, { bpm: 60 });
+    tracker.addSlots(slotsAt([1, 2], 0));
+    tracker.setBacking(null, true);
+    await pumpTo(tracker, 0, 3);
+
+    tracker.setBacking(backing);
+    await pumpTo(tracker, 3, 5);
+
+    expect(mic.sequenceRequests.flatMap((r) => r.slots.map((s) => s.time))).toEqual([1, 2]);
+    expect(mic.sequenceRequests.every((r) => r.backing?.gain === 0.02)).toBe(true);
+    expect(tracker.cycles()[0]).toMatchObject({ flawless: true });
+  });
+
+  it('test_tracker_gainArrivesAfterGivingUp_onlyTheNewerSlotsAreJudged', async () => {
+    const mic = new FakeMic();
+    const tracker = new SequenceTracker(mic, { bpm: 60 });
+    tracker.addSlots(slotsAt([1], 0));
+    tracker.addSlots(slotsAt([4], 1));
+    tracker.setBacking(null, true);
+    await pumpTo(tracker, 0, 4);
+
+    tracker.setBacking(backing);
+    await pumpTo(tracker, 4, 7);
+
+    expect(mic.sequenceRequests.flatMap((r) => r.slots.map((s) => s.time))).toEqual([4]);
+    expect(tracker.cycles().map((c) => [c.cycle, c.flawless, c.uncertain])).toEqual([
+      [0, false, true],
+      [1, true, false],
+    ]);
+  });
+});
+
 describe('SequenceTracker cut by a pause (D-085)', () => {
   /** Four-note cycles every 0.5 s from t = 1 (fake worker: every slot OK, played on time). */
   const cycleSlots = (cycle: number, from: number): PlannedSlot[] =>
     [0, 1, 2, 3].map((k) => ({ time: from + k * 0.5, midi: 52 + k, stringIdx: k % 6, cycle }));
-  const pumpTo = async (tracker: SequenceTracker, from: number, to: number) => {
-    for (let t = from; t <= to + 1e-9; t += 0.05) {
-      tracker.pump(t);
-      await Promise.resolve();
-      await Promise.resolve();
-    }
-  };
 
   it('keeps the slots before the cut, judges them at once, and starts the next stretch like a new take', async () => {
     const mic = new FakeMic();

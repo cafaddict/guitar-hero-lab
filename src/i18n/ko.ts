@@ -1194,9 +1194,12 @@ export const ko = {
       graduated: (step: number) => `${step}단계 졸업! 다음 단계가 60 BPM으로 열려요.`,
       memorized: '암기 완료: TAB 없이 4바퀴 연속 실수 없음.',
       withBacking: '반주와 함께 1단계',
-      backingNote: '반주와 함께 쳐요. 이어폰으로 들어 주세요(스피커 소리는 음 판정을 흔들 수 있어요).',
-      speakerReference:
-        '스피커 반주: 판정은 참고로만 보여 주고 기록·졸업에는 넣지 않아요. 이어폰이면 E를 누르세요.',
+      backingNote: '반주와 함께 쳐요. 이어폰이면 시작 전에 E를 누르세요.',
+      speakerNote:
+        '스피커 반주: 마이크에 들어온 반주 소리는 걸러 내고 판정해요. 기록·졸업에도 그대로 들어가요.',
+      gainLost: '반주 소리를 재지 못했어요. 일시정지 뒤 이어 하면 다시 재요.',
+      /** Summary of a stored reference run from before D-102 (unmasked speaker backing). */
+      speakerReference: '스피커 반주(이전 방식): 이 실행은 참고로만 보여 주고 기록·졸업에는 넣지 않았어요.',
     },
     e3: {
       how: '코드에 도착할 때마다 천천히 스트럼(또는 아르페지오)해서 모든 줄을 확인해요. 깨끗하면 Enter, 먹히거나 버징이면 ↓. 표시하지 않은 도착은 깨끗하지 않은 것으로 세요.',
