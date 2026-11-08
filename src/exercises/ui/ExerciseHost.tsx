@@ -30,6 +30,7 @@ import { createExerciseMic, createExerciseOutput } from '../audioAdapter';
 import { contentContextFor } from '../contentContext';
 import type { ExerciseDefinition } from '../registry';
 import type { ContentContext, ExerciseContext, ExerciseRunner } from '../types';
+import { saveEarphoneChoice } from './earphoneSetting';
 import { HowToPanel } from './HowToPanel';
 import { useRunnerSnapshot } from './hooks';
 import { MicFeedback } from './MicFeedback';
@@ -380,6 +381,7 @@ export function ExerciseHost({
         xStringCheck: current.xStringCheck,
         leftHanded: current.leftHanded,
         visualOnlyMetronome: current.visualOnlyMetronome,
+        earphonesByOutput: current.earphonesByOutput,
       },
       personalOffsetMs: personalOffsetFrom(recent.slice(0, 5)),
     };
@@ -450,6 +452,8 @@ export function ExerciseHost({
       return;
     }
     const result = definition.resultSchema.parse(runner.finish());
+    // The song's earphone choice is a device setting per output (D-101), kept apart from the run's record.
+    saveEarphoneChoice(definition, result, useSettingsStore.getState()).catch(() => {});
     const stats = runner.dspStats();
     save({
       id: newId(),

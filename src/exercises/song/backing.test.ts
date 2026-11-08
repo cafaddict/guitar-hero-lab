@@ -1,11 +1,14 @@
 /** SPEC v1.1 §8.6 play-along: backing schedule, earphone policy, speaker masking and the chord check. */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_METRONOME_CONFIG } from '../../audio/metronome';
+import { DEFAULT_SETTINGS, rememberEarphones } from '../../data/settings';
 import { extractMetrics, songResultSchema } from '../../domain/exerciseResults';
+import type { Calibration } from '../../domain/records';
 import type { SetClassification } from '../../dsp/modeC';
 import { DETECTOR_VERSION } from '../../dsp/version';
 import { GridRecorder } from '../gridRecorder';
-import { testContext } from '../testing/fakes';
+import { definePlugin } from '../registry';
+import { TEST_SETTINGS, testContext } from '../testing/fakes';
 import { songPlugin } from './plugin';
 import { type BackingRenderer, BLEED_WINDOW_S, isBluetoothLabel, SongRunner } from './runner';
 
@@ -250,5 +253,134 @@ describe('S play-along (SPEC v1.1 §8.6)', () => {
       recent,
     );
     expect(params.earphonesByOutput).toEqual({ 'USB DAC': true });
+  });
+
+  const calibrationOn = (outputDeviceLabel: string): Calibration => ({
+    id: 'cal',
+    createdAt: 0,
+    inputDeviceLabel: 'mic',
+    outputDeviceLabel,
+    sampleRate: 48000,
+    trackSettings: { echoCancellation: false },
+    noiseFloorDbfs: -60,
+    tuningCents: [0, 0, 0, 0, 0, 0],
+    stringTemplates: Array.from({ length: 6 }, () => ({ harmonics: [1, 0.5], decayRatio: 0.6 })),
+    rttMs: 120,
+    rttMethod: 'loopback',
+    rttMadMs: 0.5,
+    warnings: [],
+  });
+
+  const backingResult = (over: Record<string, unknown>) =>
+    songResultSchema.parse({
+      songId: 's01',
+      mode: 'perform',
+      chartHidden: false,
+      bpm: 60,
+      completed: true,
+      stops: 0,
+      memorized: false,
+      beat1HitRate: null,
+      backingOn: true,
+      backingAudible: false,
+      outputLabel: 'USB DAC',
+      ...over,
+    });
+
+  it('test_earphoneChoice_backingRunOnEarphones_isKeyedByTheRunsOutputLabel (D-101)', () => {
+    const settings = { ...DEFAULT_SETTINGS, earphonesByOutput: { 'MacBook 스피커': false } };
+
+    const choice = songPlugin.earphoneChoice!(
+      backingResult({ backingAudible: false, outputLabel: 'USB DAC' }),
+    );
+
+    expect(choice).toEqual({ outputLabel: 'USB DAC', earphones: true });
+    expect(rememberEarphones(settings, choice!)).toEqual({
+      earphonesByOutput: { 'MacBook 스피커': false, 'USB DAC': true },
+    });
+  });
+
+  it('test_earphoneChoice_backingRunOnSpeakers_storesSpeakers (D-101)', () => {
+    const choice = songPlugin.earphoneChoice!(
+      backingResult({ backingAudible: true, outputLabel: 'MacBook 스피커' }),
+    );
+
+    expect(choice).toEqual({ outputLabel: 'MacBook 스피커', earphones: false });
+  });
+
+  it('test_earphoneChoice_learnRunOrNoOutputLabel_storesNothing (D-101)', () => {
+    expect(songPlugin.earphoneChoice!(backingResult({ mode: 'learn', backingOn: false }))).toBeNull();
+    expect(songPlugin.earphoneChoice!(backingResult({ outputLabel: undefined }))).toBeNull();
+  });
+
+  it('test_earphoneChoice_throughTheRegistry_parsesAStoredResult (D-101)', () => {
+    const definition = definePlugin(songPlugin);
+    const stored = JSON.parse(JSON.stringify(backingResult({ backingAudible: false })));
+
+    expect(definition.earphoneChoice(stored)).toEqual({ outputLabel: 'USB DAC', earphones: true });
+  });
+
+  it('test_songRunner_settingsChoiceForOutputNotInHistory_isTheDefault (D-101)', () => {
+    const t = testContext();
+    const ctx = {
+      ...t.ctx,
+      calibration: calibrationOn('USB DAC'),
+      settings: { ...TEST_SETTINGS, earphonesByOutput: { 'USB DAC': true } },
+    };
+    // 50 recent learn runs: none of them is a backing run on 'USB DAC'.
+    const recent = Array.from({ length: 50 }, () => backingResult({ mode: 'learn', backingOn: false }));
+    const params = songPlugin.withHistory!(
+      songPlugin.paramsSchema.parse({
+        songId: 's01',
+        mode: 'perform',
+        bpm: 60,
+        chartHidden: false,
+        loopSection: null,
+      }),
+      recent,
+    );
+
+    const runner = songPlugin.createRunner(ctx, params);
+
+    expect(params.earphonesByOutput).toEqual({});
+    expect(runner.snapshot().view).toMatchObject({ outputLabel: 'USB DAC', earphones: true });
+  });
+
+  it('test_songRunner_settingsAndHistoryDisagree_settingsChoiceWins (D-101)', () => {
+    const t = testContext();
+    const ctx = {
+      ...t.ctx,
+      calibration: calibrationOn('USB DAC'),
+      settings: { ...TEST_SETTINGS, earphonesByOutput: { 'USB DAC': false } },
+    };
+    const params = songPlugin.paramsSchema.parse({
+      songId: 's01',
+      mode: 'perform',
+      bpm: 60,
+      chartHidden: false,
+      loopSection: null,
+      earphonesByOutput: { 'USB DAC': true },
+    });
+
+    const runner = songPlugin.createRunner(ctx, params);
+
+    expect(runner.snapshot().view).toMatchObject({ earphones: false });
+  });
+
+  it('test_songRunner_outputUnknownToSettings_fallsBackToHistoryChoice (D-101)', () => {
+    const t = testContext();
+    const ctx = { ...t.ctx, calibration: calibrationOn('USB DAC') };
+    const params = songPlugin.paramsSchema.parse({
+      songId: 's01',
+      mode: 'perform',
+      bpm: 60,
+      chartHidden: false,
+      loopSection: null,
+      earphonesByOutput: { 'USB DAC': true },
+    });
+
+    const runner = songPlugin.createRunner(ctx, params);
+
+    expect(runner.snapshot().view).toMatchObject({ earphones: true });
   });
 });

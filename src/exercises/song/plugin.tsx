@@ -288,8 +288,13 @@ export const songPlugin: ExercisePlugin<SongParams, SongResult, SongView> = {
           seed: 7,
         }),
     ),
-  // The earphone choice is remembered per output device: the latest backing run on that output (§8.6-1).
-  // Learn runs carry no choice, so the window reaches far enough back for them not to erase it.
+  // The earphone choice per output device is a device setting (D-101): each backing run writes it.
+  earphoneChoice: (result) =>
+    result.backingOn && result.outputLabel
+      ? { outputLabel: result.outputLabel, earphones: result.backingAudible !== true }
+      : null,
+  // The history still fills devices the settings do not know yet (choices made before D-101); learn runs
+  // carry no choice, so the window reaches far enough back for them not to erase it.
   historyDepth: 50,
   withHistory: (params, recent) => {
     const byOutput: Record<string, boolean> = { ...params.earphonesByOutput };

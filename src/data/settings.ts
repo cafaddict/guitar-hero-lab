@@ -49,6 +49,11 @@ export const settingsSchema = z.object({
   /** Headstock shape for the tuning-peg direction picture (SPEC v1.1 §9.3). */
   headStyle: z.enum(['3+3', 'inline6']),
   micDisabled: z.boolean(),
+  /**
+   * Song play-along earphone choice per output device label (true = earphones, false = speakers, §8.6-1,
+   * D-101). Written after every backing run, so it stays however long ago that device was last used.
+   */
+  earphonesByOutput: z.record(z.string(), z.boolean()),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -69,7 +74,22 @@ export const DEFAULT_SETTINGS: Settings = {
   blockTransition: true,
   headStyle: '3+3',
   micDisabled: false,
+  earphonesByOutput: {},
 };
+
+/** The earphone choice of one backing run (output device label → earphones?). */
+export interface EarphoneChoice {
+  outputLabel: string;
+  earphones: boolean;
+}
+
+/** The settings patch that remembers a run's earphone choice for its output device (D-101). */
+export function rememberEarphones(
+  settings: Pick<Settings, 'earphonesByOutput'>,
+  choice: EarphoneChoice,
+): Pick<Settings, 'earphonesByOutput'> {
+  return { earphonesByOutput: { ...settings.earphonesByOutput, [choice.outputLabel]: choice.earphones } };
+}
 
 /** Fills missing keys from defaults (forward compatible with older exports). */
 export function normalizeSettings(raw: unknown): Settings {

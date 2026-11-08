@@ -5,6 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import type { z } from 'zod';
+import type { EarphoneChoice } from '../data/settings';
 import type { MetricSampleInput } from '../domain/records';
 import type {
   ContentContext,
@@ -43,6 +44,8 @@ export interface ExerciseDefinition {
   toMetrics(result: unknown, params: unknown): MetricSampleInput[];
   /** Params adjusted by the latest stored results of this exercise (results that fail validation are skipped). */
   withHistory(params: unknown, recentResults: readonly unknown[]): unknown;
+  /** The earphone choice the result made for its output device, or null (none, or an invalid result). */
+  earphoneChoice(result: unknown): EarphoneChoice | null;
   /** Same run at the tempo the result suggests, or null (no tempo, same tempo, or an invalid result). */
   suggestedTempoRetry(params: unknown, result: unknown): { bpm: number; params: unknown } | null;
 }
@@ -89,6 +92,11 @@ export function definePlugin<P, R, V>(plugin: ExercisePlugin<P, R, V>): Exercise
         return parsed.success ? [parsed.data] : [];
       });
       return plugin.withHistory(typedParams, results);
+    },
+    earphoneChoice(result) {
+      const parsed = plugin.resultSchema.safeParse(result);
+      if (!plugin.earphoneChoice || !parsed.success) return null;
+      return plugin.earphoneChoice(parsed.data);
     },
     suggestedTempoRetry(params, result) {
       const typedParams = parse(params);

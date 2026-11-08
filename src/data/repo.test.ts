@@ -323,6 +323,13 @@ describe('AC-T1 Dexie schema, append-only attempts, rebuildDerived', () => {
     await repo.setMeta('settings', { ...older, strictness: 'strict' });
     expect(await repo.settings()).toMatchObject({ strictness: 'strict', sensitivity: 'normal' });
   });
+
+  it('settings stored before the song earphone choice existed read back with an empty choice map (D-101)', async () => {
+    const repo = freshRepo();
+    const { earphonesByOutput: _dropped, ...older } = DEFAULT_SETTINGS;
+    await repo.setMeta('settings', { ...older, theme: 'light' });
+    expect(await repo.settings()).toMatchObject({ theme: 'light', earphonesByOutput: {} });
+  });
 });
 
 describe('AC-T2 export / import', () => {
@@ -405,6 +412,19 @@ describe('AC-T2 export / import', () => {
     await applyImport(used, envelope, 'merge');
     expect((await used.settings()).theme).toBe('contrast');
     expect((await used.progression(T0)).stage).toBe(1);
+  });
+
+  it('a backup made before the song earphone choice existed imports with an empty choice map (D-101)', async () => {
+    const a = freshRepo();
+    const { earphonesByOutput: _dropped, ...older } = DEFAULT_SETTINGS;
+    await a.setMeta('settings', { ...older, theme: 'light' });
+    const text = JSON.stringify(await exportAll(a.db, T0));
+    expect(text).not.toContain('earphonesByOutput');
+
+    const target = freshRepo();
+    await applyImport(target, parseImport(text).envelope, 'replace');
+
+    expect(await target.settings()).toMatchObject({ theme: 'light', earphonesByOutput: {} });
   });
 
   it('rejects invalid files and newer schema versions', () => {

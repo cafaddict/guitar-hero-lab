@@ -222,6 +222,7 @@ export const TEST_SETTINGS: ExerciseSettings = {
   xStringCheck: false,
   leftHanded: false,
   visualOnlyMetronome: false,
+  earphonesByOutput: {},
 };
 
 export const TEST_CONTENT: ContentContext = {

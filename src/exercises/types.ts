@@ -9,6 +9,7 @@ import type { z } from 'zod';
 import type { MetronomeConfig, ScheduledClick } from '../audio/metronome';
 import type { Job } from '../audio/worker/protocol';
 import type { GVoicing } from '../content/voicings';
+import type { EarphoneChoice } from '../data/settings';
 import type { Calibration, MetricSampleInput } from '../domain/records';
 import type { ChordVoicing } from '../domain/voicing';
 import type { SequenceNoteResult, SequenceSlot } from '../dsp/sequence';
@@ -199,6 +200,8 @@ export interface ExerciseSettings {
   xStringCheck: boolean;
   leftHanded: boolean;
   visualOnlyMetronome: boolean;
+  /** Song play-along earphone choice per output device label, from the device settings (D-101). */
+  earphonesByOutput: Readonly<Record<string, boolean>>;
 }
 
 export interface ExerciseContext {
@@ -239,6 +242,11 @@ export interface ExercisePlugin<P, R, V> {
   withHistory?(params: P, recent: readonly R[]): P;
   /** How many recent results withHistory sees (default 5). */
   historyDepth?: number;
+  /**
+   * Optional: the earphone choice a finished run made for its output device, or null (no choice). The host
+   * stores it in the device settings (`earphonesByOutput`, D-101).
+   */
+  earphoneChoice?(result: R): EarphoneChoice | null;
   /** Optional: the run again at the tempo its summary suggests (ladder up/down, passed → +5), or null. */
   suggestedTempoRetry?(params: P, result: R): { bpm: number; params: P } | null;
   usesMicrophone: boolean;

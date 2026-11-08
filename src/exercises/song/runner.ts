@@ -48,7 +48,10 @@ export const songParamsSchema = z.object({
   backingOn: z.boolean().default(false),
   /** "이어폰(유선 권장)을 쓰고 있어요" — the backing cannot leak into the microphone. */
   earphones: z.boolean().default(false),
-  /** Last earphone choice per output device label, from this song's history (§8.6-1). */
+  /**
+   * Last earphone choice per output device label from the song's recent history (§8.6-1). Only a fallback
+   * now: the device settings' choice (`ctx.settings.earphonesByOutput`, D-101) comes first.
+   */
   earphonesByOutput: z.record(z.string(), z.boolean()).default({}),
   /** No recent run of this song at this stage (D-082): the view says the stage went up. Set from history. */
   firstAtStage: z.boolean().default(false),
@@ -200,7 +203,10 @@ export class SongRunner extends BaseRunner<SongResult, SongView> {
     this.params = params;
     this.song = songById(params.songId);
     this.backingOn = params.mode === 'perform' && params.backingOn;
-    this.earphones = params.earphonesByOutput[this.outputLabel] ?? params.earphones;
+    this.earphones =
+      ctx.settings.earphonesByOutput[this.outputLabel] ??
+      params.earphonesByOutput[this.outputLabel] ??
+      params.earphones;
     this.chart = expandChart(this.song);
     this.bpm = params.bpm;
     this.chartHidden = params.chartHidden;
