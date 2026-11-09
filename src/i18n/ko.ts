@@ -1544,7 +1544,8 @@ export const ko = {
     stringMuted: (stringNo: number) => `${stringNo}번 줄이 막혔어요`,
     stringWrong: (stringNo: number) => `${stringNo}번 줄 음이 달라요`,
     stringUnexpected: (stringNo: number) => `${stringNo}번 줄이 울렸어요`,
-    retry(reason: RetryReasonCode): string {
+    /** `action`: what the user was asked to play, for the reasons that name it (a whole chord in a strum). */
+    retry(reason: RetryReasonCode, action: 'pluck' | 'strum' = 'pluck'): string {
       switch (reason) {
         case 'LOW_LEVEL':
           return '잘 안 들렸어요. 조금 더 크게 한 번 더 쳐 주세요.';
@@ -1561,7 +1562,9 @@ export const ko = {
         case 'DETUNED':
           return '튜닝이 많이 벗어났어요. 튜너로 먼저 맞춰 주세요.';
         case 'NOT_STRING':
-          return '줄 소리가 아닌 것 같아요(몸통 소리 등). 그 줄을 한 번 더 쳐 주세요.';
+          return action === 'strum'
+            ? '줄 소리가 아닌 것 같아요(몸통 소리 등). 코드를 한 번 더 스트럼해 주세요.'
+            : '줄 소리가 아닌 것 같아요(몸통 소리 등). 그 줄을 한 번 더 쳐 주세요.';
       }
     },
     unverifiable: '확인 불가',

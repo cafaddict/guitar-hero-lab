@@ -2,7 +2,7 @@
 
 > `npm run bench:dsp`(test split)가 생성한다. 손으로 고치지 않는다. GuitarSet 결과는 `npm run bench:guitarset`가 아래 별도 절에 쓴다.
 
-- 실행: 2026-10-12T14:39:02.005Z · split **test** · detectorVersion **1.5.0** · 14406 cases · 228 s
+- 실행: 2026-11-09T09:50:09.260Z · split **test** · detectorVersion **1.6.0** · 14406 cases · 261 s
 - 결과: **ALL THRESHOLDS MET** (임계값: `docs/goal/v1.1/thresholds.json` — v1 계약을 그대로 포함, 무결성 11)
 
 ## 지표 요약
@@ -51,12 +51,12 @@
 | modeCSetStage8to11 | top1AccuracyMin | 0.9990 | 0.9000 | PASS | 1000 |
 | swing | onsetF1At25msMin | 0.9924 | 0.9500 | PASS | 3008 |
 | swing | timingAbsErrP95MsMax | 9.229 | 15.000 | PASS | 3008 |
-| swing | slotAssignmentAccuracyMin | 0.9714 | 0.9500 | PASS | 3008 |
+| swing | slotAssignmentAccuracyMin | 0.9724 | 0.9500 | PASS | 3008 |
 | backingBleed | strumOnsetF1At25msMin | 0.9863 | 0.9000 | PASS | 2672 |
 | backingBleed | backingHitFalseStrumRateMax | 0.0049 | 0.0500 | PASS | 2022 |
-| perf | verifyStrumMedianMsMax | 9.267 | 20.000 | PASS | 1 |
-| perf | verifyPluckMedianMsMax | 2.253 | 10.000 | PASS | 1 |
-| perf | workletBlockAvgMsMax | 0.0365 | 0.3000 | PASS | 1 |
+| perf | verifyStrumMedianMsMax | 9.871 | 20.000 | PASS | 1 |
+| perf | verifyPluckMedianMsMax | 2.269 | 10.000 | PASS | 1 |
+| perf | workletBlockAvgMsMax | 0.0367 | 0.3000 | PASS | 1 |
 | coverage | modeBVerifiableRatioAtLeastDefaultRule | 0.4565 | 0.4565 | PASS | 9 |
 
 ## 베타 — 게이트 아님
@@ -3391,8 +3391,8 @@
 | snrDb | 값 | n |
 |---|---|---|
 | 15 | 0.9785 | 1024 |
-| 25 | 0.9748 | 992 |
-| 40 | 0.9607 | 992 |
+| 25 | 0.9768 | 992 |
+| 40 | 0.9617 | 992 |
 
 </details>
 
@@ -3400,9 +3400,9 @@
 
 | micHighpassHz | 값 | n |
 |---|---|---|
-| 0 | 0.9570 | 1024 |
+| 0 | 0.9580 | 1024 |
 | 100 | 0.9808 | 992 |
-| 150 | 0.9768 | 992 |
+| 150 | 0.9788 | 992 |
 
 </details>
 
@@ -3410,8 +3410,8 @@
 
 | model | 값 | n |
 |---|---|---|
-| additive | 0.9648 | 1504 |
-| karplus-strong | 0.9781 | 1504 |
+| additive | 0.9654 | 1504 |
+| karplus-strong | 0.9794 | 1504 |
 
 </details>
 
@@ -3420,7 +3420,7 @@
 | sampleRate | 값 | n |
 |---|---|---|
 | 44100 | 0.9741 | 1504 |
-| 48000 | 0.9688 | 1504 |
+| 48000 | 0.9707 | 1504 |
 
 </details>
 
@@ -3428,8 +3428,8 @@
 
 | reverb | 값 | n |
 |---|---|---|
-| none | 0.9747 | 1504 |
-| small-room | 0.9681 | 1504 |
+| none | 0.9754 | 1504 |
+| small-room | 0.9694 | 1504 |
 
 </details>
 
@@ -3437,8 +3437,8 @@
 
 | condition | 값 | n |
 |---|---|---|
-| P7 | 0.9655 | 928 |
-| P7+bleed | 0.9601 | 576 |
+| P7 | 0.9666 | 928 |
+| P7+bleed | 0.9635 | 576 |
 | P8 | 0.9826 | 576 |
 | P8+bleed | 0.9774 | 928 |
 
@@ -3635,7 +3635,7 @@
 <!-- guitarset:start -->
 ## GuitarSet 실녹음 벤치마크 (`npm run bench:guitarset`, 생성)
 
-- 실행: 2026-10-12T14:39:40.443Z · detector **1.5.0** · 360 clips · 데이터: Zenodo 3371780 (GuitarSet 1.1.0, **CC BY 4.0**, Xi et al. 2018) — `audio_mono-mic` + `annotation`
+- 실행: 2026-11-09T10:07:34.298Z · detector **1.6.0** · 360 clips · 데이터: Zenodo 3371780 (GuitarSet 1.1.0, **CC BY 4.0**, Xi et al. 2018) — `audio_mono-mic` + `annotation`
 - 판정은 **test 플레이어(04, 05)**, 튜닝은 dev 플레이어(00–03)만 썼다.
 - Funk comp 클립은 주석 없는 뮤트 "칙" 소리가 많아 onset F1에서 제외했다(SPEC §14.4).
 - solo 단음 시퀀스(SPEC v1.1 §14.4): 인접 onset 간격·음 지속 ≥ 120 ms, onset + 60 ms에 다른 줄 음이 울리는 중이면 제외, [+30, +130 ms] 윤곽 ±35 cents. 검출 onset(시퀀스 경로)과 ±50 ms 짝지은 음만 하드 지표에 쓰고, test 플레이어의 짝지은 음이 1000개 미만이면 FAIL. onset F1(소프트)은 해머온·슬라이드를 포함한 모든 solo 음 onset(60 ms 묶음)이 정답이다.
@@ -3697,3 +3697,4 @@
 - 2026-10-07T20:13:07.863Z · detector 1.3.1 · split test · PASS (all thresholds met)
 - 2026-10-09T01:07:49.773Z · detector 1.4.0 · split test · PASS (all thresholds met)
 - 2026-10-12T14:39:02.005Z · detector 1.5.0 · split test · PASS (all thresholds met)
+- 2026-11-09T09:50:09.260Z · detector 1.6.0 · split test · PASS (all thresholds met)

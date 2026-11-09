@@ -2,7 +2,7 @@
 
 > 대상: `src/dsp/` (순수 TypeScript, Node·브라우저 공용). 근거: SPEC §10, 리서치 02. 파라미터는 **dev split(시드 1000–1999)에서만** 튜닝했다.
 > 벤치마크 결과는 `docs/BENCHMARK.md`(생성 파일), 실녹음(GuitarSet) 분석은 아래 "GuitarSet" 절(M3)에 적는다.
-> detectorVersion: `src/dsp/version.ts` (현재 1.5.0 — Mode A 줄 소리 아님(NOT_STRING)·앞 줄 울림 상쇄·판정 감도(22절). 1.4.0은 v1.1 M11: Mode C 마진 재튜닝, 시퀀스·반주 마스킹·베타 판정기 추가. 1.3.1은 M3 onset 재튜닝·Mode A 강건화). 알고리즘·파라미터가 바뀌면 올린다.
+> detectorVersion: `src/dsp/version.ts` (현재 1.6.0 — Mode B 몸통 노크 거르기(NOT_STRING, 23절). 1.5.0은 Mode A 줄 소리 아님(NOT_STRING)·앞 줄 울림 상쇄·판정 감도(22절). 1.4.0은 v1.1 M11: Mode C 마진 재튜닝, 시퀀스·반주 마스킹·베타 판정기 추가. 1.3.1은 M3 onset 재튜닝·Mode A 강건화). 알고리즘·파라미터가 바뀌면 올린다.
 
 ## 0. 공통
 
@@ -73,6 +73,7 @@ SPEC §10.6 골격(창 +40 ms·170.7 ms, 잡음 = 직전 0.5 s bin별 median, �
 5. **기대 밖 음 탐색**: 전 음역 탐색은 화음 고역에서 오탐이 많아, 줄마다 ±1·±2 반음(잘못된 프렛 가설)만 탐색한다. 증거 ≥ 28 dB 그리고 후기 ≥ 8 dB. dev 분포: 깨끗한 스트럼 최대 25.7 dB, 잘못된 프렛 median 32.7 dB.
 - 커버리지: 판정기는 §6.3 기본 규칙(`MODE_B_COLLISION_PARAMS = DEFAULT_COLLISION_PARAMS`)을 그대로 쓴다(Stage 0–7 verifiable 비율 0.457).
 - 성능: 노이즈 프레임 hop을 창/2로 해 median 9.4 ms(목표 ≤ 20 ms).
+- 몸통 노크: 위 판정 전에 줄 소리 증거를 보고 RETRY `NOT_STRING`으로 돌린다(23절, D-106).
 
 ## 6. Mode C — 닫힌 집합 분류 (`modeC.ts`)
 
@@ -279,4 +280,39 @@ M2 설정의 GuitarSet dev 지표: Mode A OK 0.884(n=43), **onset F1 0.734**(P 0
 - 회귀 테스트 `src/dsp/modeA.takes.test.ts`(11개, 원래 코드에서 5개 실패 확인).
 
 **한계**: 정답 있는 실녹음(노크·뮤트·빠른 줄 넘김) 없음 — 녹음 키트로 쌓아 재조정(BACKLOG). 옥타브 관계 울림 아래 뮤트 음은 LOW_LEVEL 재시도가 남는다(직전 구간 감쇠 외삽 후보). 울림이 있으면 Mode A를 두 번 + comb로 돌린다(수 ms 추가, 판정 지연 예산 안).
+
+## 23. Mode B 몸통 노크 거르기 (1.6.0, D-106)
+
+몸통을 친 소리가 스트럼 판정(`verifyStrum`)에 들어가면 줄이 MUTED로 찍혀 FAIL이 되거나, E1 strum·E3 pfc에 그대로 기록될 수 있었다. Mode A(22절)와 방향은 같지만 방법이 다르다. Mode A는 "기대음 근처의 배음열" 하나를 찾는다. 스트럼은 줄 여러 개의 배음이 겹치므로, 코드가 정한 partial 자리에 좁은 피크가 있는지와 소리가 얼마나 남는지를 본다.
+
+**줄 소리 증거(`strumEvidence`)**: 초기 창 [+30, +130 ms], 후기 창 [+130, +230 ms], 직전 창(같은 100 ms, onset − 20 ms에서 끝남)의 Hann, zero-pad ×2 스펙트럼을 쓴다. 새 에너지 = max(0, |창|² − |직전 창|²)이고, 대역은 60–5000 Hz다.
+
+| 값 | 뜻 |
+|---|---|
+| `riseDb` | 초기 창 ÷ 직전 창 전체 에너지(dB) |
+| `lateDb` | 후기 창 새 에너지 ÷ 초기 창 새 에너지(dB) |
+| `peakFraction` | 기대 partial 중 피크로 인정된 비율 |
+
+`peakFraction`의 대상은 기대음마다 h = 1..`notStringMaxPartial`이고 중심이 5000 Hz 이하인 partial이다(중심은 인하모닉 보정 포함). 중심 ±max(8 Hz, 25 cent) 안의 가장 큰 국소 최대가 새 에너지를 갖고, ±`notStringFloorHz` 구간의 median × `notStringPeakProminence` 이상이면 그 partial을 피크로 센다.
+
+**판정**: `riseDb ≥ notStringRiseDb` 그리고 `peakFraction < notStringMaxPeakFraction` 그리고 `lateDb ≤ notStringMaxLateDb`이면 RETRY `NOT_STRING`(모든 줄 WEAK). CLIPPING 검사 다음, LOW_LEVEL 검사 앞에 둔다. 조건 셋의 역할:
+
+- 상승: 이미 울리던 소리 위의 작은 변화는 노크로 보지 않는다.
+- 피크 비율: 노크의 공진 몇 개는 코드의 partial 자리에 잘 맞지 않는다.
+- 후기 창: 노크는 100 ms쯤이면 사라진다. 피크가 적어도 오래 남는 소리는 노크로 보지 않는다.
+
+**파라미터**(`DEFAULT_MODE_B_PARAMS`, dev split에서 정함):
+
+| 파라미터 | 값 |
+|---|---|
+| `notStringRiseDb` | 10 |
+| `notStringMaxPeakFraction` | 0.25 |
+| `notStringMaxLateDb` | −8 |
+| `notStringMaxPartial` | 8 |
+| `notStringPeakProminence` | 2.5 |
+| `notStringFloorHz` | 40 |
+
+**문구**: `ko.verdict.retry(reason, action)`. E1 스트럼 단계는 "코드를 한 번 더 스트럼해 주세요", Mode A는 기존 "그 줄을 한 번 더 쳐 주세요" 그대로다. Mode A의 "같은 줄 두 번째 NOT_STRING이면 MUTED"는 스트럼에 없다. 스트럼에서 같은 RETRY가 두 번 이어지면 기존 규칙대로 한 줄씩 확인을 권한다.
+
+측정값과 한계는 D-106에 적었다. 합성 노크 593/600이 NOT_STRING이고, 합성 Mode B 벤치와 GuitarSet 판정은 바뀌지 않았다. 정답 있는 실녹음 노크로 재지는 못했다.
 

@@ -1135,3 +1135,41 @@ v1.1 goal(M9–M15)이 끝난 뒤 사용자가 실제로 써 보며 요청한 �
   - 세션 화면은 세션을 계획할 때 읽은 기록(`history`)을 넘기고, 이번 세션에 친 곡은 "지금 친 곡"(0세션 전)으로 더해서 넘긴다(`withSongsPlayed`). 기록은 세션 시작 때 한 번 읽으므로, 이것이 없으면 Space를 이어 누를 때 오래 안 친 두 곡만 오가고 나머지 곡에는 가지 않는다.
 - **SPEC과 다른 점**(고정 파일이라 여기에 적는다): §11.10 "차례로 친다"를 id 순서 순환이 아니라 "가장 오래 안 친 곡부터"로 읽는다. 레퍼토리 곡을 빠짐없이 돌아가며 친다는 뜻은 같고, 순서만 기록을 따른다.
 - **알려진 점**: 이번 세션에 친 곡끼리는 모두 0세션 전으로 같아서 id 순서로 고른다(그날 친 순서는 보지 않는다).
+
+## D-106 스트럼 모드(Mode B 베타)도 줄 소리 증거로 몸통 노크를 거른다 (detector 1.6.0)
+- **요청(BACKLOG 판정(DSP))**: D-073이 Mode A에 한 것과 같은 방향으로 Mode B에서도 노크를 거른다.
+- **원인**: `verifyStrum`에는 "이 소리가 줄 소리인가"를 보는 단계가 없었다. 노크도 onset으로 잡히면 기대 줄을 하나씩 판정했고, 줄 소리가 없으니 뮤트로 읽혀 FAIL이 나올 수 있었다. 합성 노크 600건 중 156건이 FAIL이었다. E1 strum과 E3 pfc는 이 판정을 그대로 기록한다.
+- **판정 방법**(자세한 식은 `docs/DSP.md` 23절):
+  - **조건**: CLIPPING 검사 다음, LOW_LEVEL 검사 앞에서 새 에너지 상승 ≥ 10 dB, 기대 partial 중 피크 비율 < 0.25, 후기 창 새 에너지 ≤ −8 dB를 모두 만족하면 RETRY `NOT_STRING`이다.
+  - **Mode A와 다른 점**: Mode A는 기대음 근처의 배음열 하나를 찾는다. 코드는 여러 줄의 배음이 겹치므로, 여기서는 코드가 정한 partial 자리에 좁은 피크가 있는지와 소리가 오래 남는지를 본다.
+  - **파라미터**: `notStringRiseDb` 10, `notStringMaxPeakFraction` 0.25, `notStringMaxLateDb` −8, `notStringMaxPartial` 8, `notStringPeakProminence` 2.5, `notStringFloorHz` 40. 탐색은 dev split만 썼다(`buildCases(t, 'dev')`).
+- **앱 동작**:
+  - **E1 strum**: NOT_STRING은 재시도다. 판정을 기록하지 않고 다시 듣는다(`src/exercises/e1/runner.test.ts`).
+  - **E3 pfc**: 노크는 RETRY로만 기록된다(`src/exercises/e3/runner.test.ts`).
+  - **문구**: 스트럼은 "줄 소리가 아닌 것 같아요(몸통 소리 등). 코드를 한 번 더 스트럼해 주세요."이고, Mode A 문구는 그대로다(`src/i18n/ko.test.ts`, `src/exercises/e1/E1View.test.tsx`).
+- **변경 전 코드에서 실패 확인**: 60e7e21 복사본에 새 테스트를 넣어 돌리면 8개가 실패한다.
+  - 2026-11-09에 바뀐 시험 파일 5개만 다시 돌린 결과는 8 failed, 35 passed다.
+  - 실패 내역은 `modeB.knock.test.ts` 3개, `ko.test.ts` 1개, `E1View.test.tsx` 2개, E1·E3 `runner.test.ts` 각 1개다.
+  - 지난 session 기록은 88 passed, 8 failed다. 통과 수가 다른 것은 돌린 범위가 달라서로 보이지만, 그때 명령이 남아 있지 않아 확인하지 못했다.
+- **합성 노크 묶음**: `tools/bench/debug/modeB-knock.ts --n 600`(dev Mode B 케이스의 채널·보이싱·seed 고정, 합성 노크만 입력).
+
+| 입력 | 전(60e7e21) | 후 |
+|---|---|---|
+| 노크 | FAIL 156, RETRY AMBIGUOUS 128, LOW_LEVEL 316 | RETRY NOT_STRING 593, LOW_LEVEL 6, AMBIGUOUS 1 |
+| 노크의 PASS+FAIL | 156 | **0** |
+| 모든 줄 뮤트 스트럼 | FAIL 481, AMBIGUOUS 104, LOW_LEVEL 15, NOT_STRING 0 | FAIL 481, AMBIGUOUS 103, LOW_LEVEL 15, NOT_STRING 1 |
+
+- **dev split(`bench:dsp:dev`) Mode B**: 8개 지표 모두 **바뀐 값 없음**. 최종 코드로 다시 잰 값은 `cleanFailMax` 0.0083, `cleanRetryMax` 0.0575, `verifiableMutedPassMax` 0.0025, `verifiableMutedCorrectFlagMin` 0.8900, `xStringRingingUnexpectedFailMin` 0.9325, `xStringRingingPassMax` 0.0425, `wrongFretVerifiablePassMax` 0.0025, `dependentMutedMisattributionMax` 0.0050이다. 임계값 조정은 dev 결과로만 했다.
+- **test split(`bench:dsp`)**: exit 0, 하드 지표 49개 모두 PASS. 같은 날 잰 60e7e21과 비교해 바뀐 값은 perf뿐이다.
+  - `verifyStrumMedianMs` 9.461 → 9.871, `verifyPluckMedianMs` 2.315 → 2.269, `workletBlockAvgMs` 0.0374 → 0.0367. Mode B 지표 8개는 값이 같다.
+  - `docs/BENCHMARK.md` diff에 보이는 swing `slotAssignmentAccuracy` 0.9714 → 0.9724는 이전 기록(2026-10-12)과의 차이다. 같은 날 잰 60e7e21도 0.9724여서 이번 변경 때문이 아니다.
+  - 베타 지표 8개 중 4개(`buzzDetectRate`, `buzzFalseAlarmRate`, `directionAccuracy`, `modeCUnderBleedAbsErrLe1Rate`)는 목표에 못 미치지만, 게이트가 아니고 60e7e21과 값이 같다.
+- **GuitarSet(`bench:guitarset`, 360 clips)**: Mode B 값 바뀐 것 없음. dev `modeBFalseReject` 0.0376, `modeBPerturbedFalseAccept` 0.0000 / test 0.0641, 0.0033. hard 6/6, soft 3/3.
+- **실제 스트럼이 NOT_STRING으로 빠지는지**: GuitarSet 스트럼 888건(dev와 test를 합친 전체 집계)에서 **NOT_STRING 0건**이다. 사유별로는 PASS 127, FAIL 42, RETRY LOW_LEVEL 360, AMBIGUOUS 353, CLIPPING 6이다. 합성 Mode B 벤치 3000건(dev, test 각각)도 NOT_STRING 0건이다.
+- **한계**:
+  - **정답 있는 실녹음이 없다.** 위 노크는 전부 합성(`synth/knock.ts`)이다. 실제 노크의 거르는 비율과 실제 약한 스트럼의 오판은 재지 못했고, 녹음 키트에 노크가 쌓이면 Mode A와 함께 재조정한다(BACKLOG의 D-073 항목).
+  - 합성 노크 7/600은 NOT_STRING이 아닌 다른 RETRY로 남는다(LOW_LEVEL 6, AMBIGUOUS 1). 이때 문구는 그 사유의 것이지만 PASS·FAIL은 기록되지 않는다.
+  - 코드가 울리는 중에 친 노크(0.5 s 뒤, 합성)는 600건 모두 NOT_STRING이 아니라 LOW_LEVEL 재시도이고(onset을 못 찾은 3건은 실제 위치로 판정), 변경 전과 같다. 그래서 문구는 "더 크게 쳐 주세요"다. 어느 조건에서 걸러지지 않는지는 따로 재지 않았다. 이 경우에도 PASS·FAIL은 기록되지 않는다.
+  - 모든 줄 뮤트 스트럼 1/600이 AMBIGUOUS에서 NOT_STRING으로 바뀌었다. 둘 다 재시도라 기록에는 차이가 없다.
+  - Mode A의 "같은 줄 두 번째 NOT_STRING이면 MUTED" 규칙은 스트럼에 두지 않았다. 스트럼에서 같은 RETRY가 두 번 이어지면 기존 규칙대로 한 줄씩 확인을 권한다.
+- **SPEC·thresholds**: 바꾸지 않았다. `verifyStrumMedianMs`는 약 0.4 ms 늘었고 한도(20 ms) 안이다.

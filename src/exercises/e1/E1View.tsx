@@ -188,7 +188,11 @@ export function makeE1View(voicingOf: (id: string) => ChordVoicing) {
           })}
         </ul>
         <div aria-live="polite" className="min-h-6 text-lg">
-          {view.retry && <p className="text-retry">{ko.verdict.retry(view.retry)}</p>}
+          {view.retry && (
+            <p className="text-retry">
+              {ko.verdict.retry(view.retry, view.step === 'strum' ? 'strum' : 'pluck')}
+            </p>
+          )}
           {view.suggestPluck && (
             <p className="text-info" data-testid="e1-suggest-pluck">
               {ko.exercises.e1.suggestPluck}

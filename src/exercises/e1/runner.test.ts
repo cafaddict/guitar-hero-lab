@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { voicingById } from '../../content/voicings';
 import { chordCheckResultSchema } from '../../domain/exerciseResults';
+import { STANDARD_TUNING } from '../../domain/theory';
 import type { PluckResult } from '../../dsp/modeA';
-import type { StrumResult } from '../../dsp/modeB';
+import { type StrumResult, verifyStrum } from '../../dsp/modeB';
+import { renderKnock } from '../../dsp/synth/knock';
 import type { Sensitivity } from '../../dsp/types';
 import { DETECTOR_VERSION } from '../../dsp/version';
 import { testContext } from '../testing/fakes';
@@ -48,6 +50,15 @@ function setup(
     t.mic.strike(at, result);
   };
   return { ...t, runner, strike, view: () => runner.snapshot().view };
+}
+
+/** Mode B's own verdict on a body knock in a quiet take, on the voicing these tests practise. */
+function strumOfKnock(): StrumResult {
+  const fs = 48000;
+  const onsetSample = Math.round(0.7 * fs);
+  const samples = new Float32Array(onsetSample + fs);
+  samples.set(renderKnock({ sampleRate: fs, durationS: 0.9, seed: 7 }), onsetSample);
+  return verifyStrum({ samples, sampleRate: fs, onsetSample, voicing: C, tuning: STANDARD_TUNING });
 }
 
 describe('E1 chord check — string by string (Mode A)', () => {
@@ -351,6 +362,25 @@ describe('E1 — ear first, manual, strum beta, timer', () => {
     strike(retry);
     expect(view().suggestPluck).toBe(true);
     expect(view().retry).toBe('AMBIGUOUS');
+  });
+
+  it('strum beta: a real body knock is a retry of the strum, records no verdict and stays armed (D-106)', () => {
+    const { runner, mic, strike, view } = setup({ mode: 'strum' });
+    runner.command('next');
+    const knock = strumOfKnock();
+    expect(knock.verdict).toBe('RETRY');
+    expect(knock.reasons).toEqual(['NOT_STRING']);
+    strike(knock);
+    expect(view().step).toBe('strum');
+    expect(view().retry).toBe('NOT_STRING');
+    expect(view().strumVerdict).toBeNull();
+    expect(view().strings.every((s) => s.status === null)).toBe(true);
+    expect(mic.job).toMatchObject({ kind: 'strum' });
+    expect(runner.hasResult()).toBe(false);
+    strike(knock);
+    expect(view().suggestPluck).toBe(true);
+    expect(view().step).toBe('strum');
+    expect(runner.hasResult()).toBe(false);
   });
 
   it('nothing is recorded when no attempt was completed', () => {

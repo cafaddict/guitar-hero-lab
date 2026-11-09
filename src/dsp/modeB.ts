@@ -13,6 +13,9 @@
  * x strings that would be verifiable if they rang are checked explicitly, and a residual search flags strong,
  * sustained, unexplained notes as UNEXPECTED. Verdict: all verifiable OK and nothing unexpected → PASS; a
  * confident MUTED or UNEXPECTED → FAIL naming the strings; otherwise RETRY.
+ *
+ * Not a strum (D-106): before any of that, a loud new sound with hardly any expected partial as a spectral peak
+ * that is also gone by the late window is a body knock: RETRY `NOT_STRING`.
  */
 import type { Tuning } from '../domain/theory';
 import {
@@ -76,6 +79,18 @@ export interface ModeBParams {
   tResidualDb: number;
   residualMinPartials: number;
   minLevelDb: number;
+  /**
+   * Not-a-strum check (D-106): NOT_STRING when the new energy rises ≥ notStringRiseDb, under
+   * notStringMaxPeakFraction of the expected partials (h ≤ notStringMaxPartial) are spectral peaks and the new
+   * energy has fallen ≤ notStringMaxLateDb by the late window.
+   */
+  notStringRiseDb: number;
+  notStringMaxPeakFraction: number;
+  notStringMaxLateDb: number;
+  notStringMaxPartial: number;
+  /** A partial's peak counts when it is this many times the median magnitude within ±notStringFloorHz. */
+  notStringPeakProminence: number;
+  notStringFloorHz: number;
 }
 
 /** Collision rule used by the strum verifier (SPEC §6.3 default; changing it must not lower coverage). */
@@ -108,6 +123,12 @@ export const DEFAULT_MODE_B_PARAMS: ModeBParams = {
   tResidualDb: 28,
   residualMinPartials: 2,
   minLevelDb: 10,
+  notStringRiseDb: 10,
+  notStringMaxPeakFraction: 0.25,
+  notStringMaxLateDb: -8,
+  notStringMaxPartial: 8,
+  notStringPeakProminence: 2.5,
+  notStringFloorHz: 40,
 };
 
 export interface StrumInput {
@@ -293,6 +314,80 @@ function strumLevelDb(a: Analysis, f0s: readonly number[], b: number): number {
   return values[values.length >> 1] ?? -240;
 }
 
+/** What the new energy after the onset looks like (D-106). */
+export interface StrumEvidence {
+  /** Share of the expected partials that are prominent spectral peaks carrying new energy. */
+  peakFraction: number;
+  /** Overall energy rise of the early window over the pre-onset window, 60–5000 Hz (dB). */
+  riseDb: number;
+  /** New energy of the late window relative to the early window (dB). */
+  lateDb: number;
+}
+
+/**
+ * New energy of the early and late windows against the same-length window ending 20 ms before the onset, so
+ * strings that were already ringing do not count. A string has narrow peaks at its partials and lasts; a body
+ * knock has a few resonances, which rarely fall on the chord's partials, and is gone in about 100 ms.
+ */
+function strumEvidence(
+  input: StrumInput,
+  params: ModeBParams,
+  f0s: readonly number[],
+  early: Spectrum,
+  late: Spectrum,
+): StrumEvidence {
+  const fs = input.sampleRate;
+  const len = msToSamples(params.decayWindowMs, fs);
+  const before = magnitudeSpectrum(input.samples, input.onsetSample - msToSamples(20, fs) - len, len, fs, 2);
+  const binHz = early.binHz;
+  const newPower = (spec: Spectrum, k: number) =>
+    Math.max(0, spec.mag[k]! * spec.mag[k]! - before.mag[k]! * before.mag[k]!);
+  const lo = Math.ceil(60 / binHz);
+  const hi = Math.min(early.mag.length - 2, Math.floor(5000 / binHz));
+  let rise = 0;
+  let base = 0;
+  let earlyNew = 0;
+  let lateNew = 0;
+  for (let k = lo; k <= hi; k++) {
+    rise += early.mag[k]! * early.mag[k]!;
+    base += before.mag[k]! * before.mag[k]!;
+    earlyNew += newPower(early, k);
+    lateNew += newPower(late, k);
+  }
+  const bandRatio = 2 ** (25 / 1200) - 1;
+  const floorBins = Math.round(params.notStringFloorHz / binHz);
+  let partials = 0;
+  let peaks = 0;
+  for (const f0 of f0s) {
+    for (let h = 1; h <= params.notStringMaxPartial; h++) {
+      const centre = partialHz(f0, h, params.inharmonicityB);
+      if (centre > 5000) break;
+      partials++;
+      const half = Math.max(8, centre * bandRatio);
+      let bin = -1;
+      for (
+        let k = Math.max(lo, Math.ceil((centre - half) / binHz));
+        k <= Math.floor((centre + half) / binHz);
+        k++
+      ) {
+        if (k > hi) break;
+        const m = early.mag[k]!;
+        if (m >= early.mag[k - 1]! && m >= early.mag[k + 1]! && (bin < 0 || m > early.mag[bin]!)) bin = k;
+      }
+      if (bin < 0 || newPower(early, bin) <= 0) continue;
+      const around = Array.from(early.mag.subarray(Math.max(1, bin - floorBins), bin + floorBins + 1)).sort(
+        (x, y) => x - y,
+      );
+      if (early.mag[bin]! >= params.notStringPeakProminence * around[around.length >> 1]!) peaks++;
+    }
+  }
+  return {
+    peakFraction: partials > 0 ? peaks / partials : 0,
+    riseDb: 10 * Math.log10((rise + 1e-20) / (base + 1e-20)),
+    lateDb: 10 * Math.log10((lateNew + 1e-20) / (earlyNew + 1e-20)),
+  };
+}
+
 export function verifyStrum(input: StrumInput): StrumResult {
   const t0 = performance.now();
   const params = input.params ?? DEFAULT_MODE_B_PARAMS;
@@ -350,6 +445,13 @@ export function verifyStrum(input: StrumInput): StrumResult {
       relLateDb: null,
       verifiable: map.find((m) => m.idx === n.idx)?.verifiable ?? false,
     }));
+  const evidence = strumEvidence(input, params, expectedF0s, early.spec, late.spec);
+  if (
+    evidence.riseDb >= params.notStringRiseDb &&
+    evidence.peakFraction < params.notStringMaxPeakFraction &&
+    evidence.lateDb <= params.notStringMaxLateDb
+  )
+    return result('RETRY', ['NOT_STRING'], weak(), [], [], referenceDb, 0);
   if (referenceDb < params.minLevelDb) return result('RETRY', ['LOW_LEVEL'], weak(), [], [], referenceDb, 0);
 
   const tPresent = params.tPresentDb[strictness];

@@ -57,6 +57,16 @@ describe('Korean wording rules (SPEC §12.4)', () => {
     for (const t of texts) expect(t.length).toBeGreaterThan(10);
   });
 
+  it('NOT_STRING asks for one string again after a pluck and for the chord strum after a strum (D-106)', () => {
+    expect(ko.verdict.retry('NOT_STRING')).toBe(
+      '줄 소리가 아닌 것 같아요(몸통 소리 등). 그 줄을 한 번 더 쳐 주세요.',
+    );
+    expect(ko.verdict.retry('NOT_STRING', 'pluck')).toBe(ko.verdict.retry('NOT_STRING'));
+    const strum = ko.verdict.retry('NOT_STRING', 'strum');
+    expect(strum).toContain('코드를 한 번 더 스트럼');
+    expect(strum).not.toContain('그 줄을');
+  });
+
   it('never uses a bare "틀렸습니다" anywhere in the strings', () => {
     const source = readFileSync(join(import.meta.dirname, 'ko.ts'), 'utf8');
     expect(source.includes('틀렸습니다')).toBe(false);

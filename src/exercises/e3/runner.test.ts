@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { voicingById } from '../../content/voicings';
 import { extractMetrics, pfcResultSchema, pfcScores } from '../../domain/exerciseResults';
+import { STANDARD_TUNING } from '../../domain/theory';
+import { verifyStrum } from '../../dsp/modeB';
+import { renderKnock } from '../../dsp/synth/knock';
 import { testContext } from '../testing/fakes';
 import { PfcRunner } from './runner';
 
@@ -49,6 +52,32 @@ describe('E3 precise fast change (SPEC v1.1 §11.11)', () => {
     });
     expect(result.strumBeta).toEqual(['PASS', 'FAIL', 'PASS']);
     expect(runner.dspStats().events).toBe(4);
+  });
+
+  it('a body knock heard as an arrival records RETRY, not PASS or FAIL, in the strum beta (D-106)', () => {
+    const fs = 48000;
+    const onsetSample = Math.round(0.7 * fs);
+    const samples = new Float32Array(onsetSample + fs);
+    samples.set(renderKnock({ sampleRate: fs, durationS: 0.9, seed: 7 }), onsetSample);
+    const strum = verifyStrum({
+      samples,
+      sampleRate: fs,
+      onsetSample,
+      voicing: voicingById('Cadd9'),
+      tuning: STANDARD_TUNING,
+    });
+    expect(strum.reasons).toEqual(['NOT_STRING']);
+    const t = testContext();
+    const runner = new PfcRunner(t.ctx, { from: 'G-4f', to: 'Cadd9', durationMs: 60_000 }, voicingById);
+    runner.start();
+    t.mic.strike(t.clock.t, pairResult(0));
+    t.clock.advance(2);
+    t.mic.strike(t.clock.t, { pair: pairResult(1).pair, strum });
+    expect(runner.snapshot().view).toMatchObject({ arrivals: 1, lastStrumBeta: 'RETRY' });
+    runner.command('next');
+    t.output.run(t.clock, 60, () => runner.tick());
+    runner.command('next');
+    expect(pfcResultSchema.parse(runner.finish()).strumBeta).toEqual(['RETRY']);
   });
 
   it('without a microphone each Enter or ↓ is an arrival; pass = clean rate ≥ 0.8 and ≥ 20/min', () => {
