@@ -8,6 +8,7 @@ import {
   entryKey,
   generateRoutine,
   interleave,
+  itemKey,
   NEW_CHORD_INTRO_SEC,
   nextRepertoireSong,
   type RoutineInput,
@@ -505,21 +506,60 @@ describe('SPEC v1.1 §11.10 repertoire block: "차례로 친다"', () => {
     },
   ];
 
-  it('the next repertoire song in id order, wrapping; hidden once memorized; none to move to → null', () => {
-    const skills = new Map([
-      repertoireSkill('s01'),
-      repertoireSkill('s03', { hiddenMemorized: 1 }),
-      repertoireSkill('s05'),
-    ]);
-    const input = { songs: PRACTICE_SONGS, stage: 8, skills };
-    expect(nextRepertoireSong(input, 's01')).toMatchObject({
+  const skills = new Map([
+    repertoireSkill('s01'),
+    repertoireSkill('s03', { hiddenMemorized: 1 }),
+    repertoireSkill('s05'),
+  ]);
+  /** Session 11 now; each song last played in the given session. */
+  const playedIn = (sessions: Record<string, number>): PracticeHistory => ({
+    sessionNumber: 11,
+    practiceDay: 11,
+    appearances: new Map(
+      Object.entries(sessions).map(([id, n]) => [itemKey('S', `song:${id}`), { session: n, day: n }]),
+    ),
+  });
+  const rep = (history: PracticeHistory) => ({ songs: PRACTICE_SONGS, stage: 8, skills, history });
+
+  it('test_nextRepertoireSong_otherSongsPlayedAtDifferentTimes_picksTheOnePlayedLongestAgo (D-105)', () => {
+    const history = playedIn({ s01: 10, s03: 4, s05: 8 });
+
+    expect(nextRepertoireSong(rep(history), 's01')).toMatchObject({
       songId: 's03',
       mode: 'perform',
       chartHidden: true,
     });
-    expect(nextRepertoireSong(input, 's03')).toMatchObject({ songId: 's05', chartHidden: false });
-    expect(nextRepertoireSong(input, 's05')).toMatchObject({ songId: 's01' });
-    expect(nextRepertoireSong({ ...input, skills: new Map([repertoireSkill('s01')]) }, 's01')).toBeNull();
+    expect(nextRepertoireSong(rep(history), 's03')).toMatchObject({ songId: 's05', chartHidden: false });
+  });
+
+  it('test_nextRepertoireSong_oneSongNeverPlayed_picksTheNeverPlayedSongFirst (D-105)', () => {
+    const history = playedIn({ s01: 10, s03: 1 });
+
+    expect(nextRepertoireSong(rep(history), 's01')).toMatchObject({ songId: 's05' });
+  });
+
+  it('test_nextRepertoireSong_tiedSessionsSince_picksInIdOrder (D-105)', () => {
+    const history = playedIn({ s01: 10, s03: 6, s05: 6 });
+
+    expect(nextRepertoireSong(rep(history), 's01')).toMatchObject({ songId: 's03' });
+    expect(nextRepertoireSong(rep(EMPTY_HISTORY), 's05')).toMatchObject({ songId: 's01' });
+  });
+
+  it('test_nextRepertoireSong_onlyOneRepertoireSong_returnsNull', () => {
+    const one = { ...rep(playedIn({ s01: 3 })), skills: new Map([repertoireSkill('s01')]) };
+
+    expect(nextRepertoireSong(one, 's01')).toBeNull();
+  });
+
+  it('test_repertoireBlockAndNextRepertoireSong_sameHistory_agreeOnTheSongPlayedLongestAgo (D-105)', () => {
+    const history = playedIn({ s01: 9, s03: 4, s05: 7 });
+
+    const block = generateRoutine(input({ stage: 8, skills, history })).items.find(
+      (i) => i.block === 'repertoire',
+    );
+
+    expect(block?.params).toMatchObject({ songId: 's03' });
+    expect(nextRepertoireSong(rep(history), 's01')).toMatchObject({ songId: 's03' });
   });
 
   it('Stage 9 memorization: the TAB is hidden from the third assignment (day), not the third run', () => {

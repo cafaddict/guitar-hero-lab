@@ -29,7 +29,7 @@ import { practiceOptions, stageContent, stageItems } from '../curriculum/stagePr
 import { routineInputFrom } from '../home/homeModel';
 import { subjectLabel } from '../home/subjectLabel';
 import { itemTitle } from './itemTitle';
-import { type RunIdentity, repeatSuggestion, sameRunParams } from './repeat';
+import { type RunIdentity, repeatSuggestion, sameRunParams, withSongsPlayed } from './repeat';
 import { pluginParamsFor } from './routineParams';
 import {
   acknowledgeBreak,
@@ -74,8 +74,8 @@ interface Loaded {
   splittable: boolean;
   /** The template's suggested split point (last item of the rhythm block), shown as a hint, else null. */
   splitAfterIndex: number | null;
-  /** What the repertoire block cycles through (§11.10 "차례로 친다"). */
-  repertoire: Pick<RoutineInput, 'songs' | 'stage' | 'skills'>;
+  /** What the repertoire block's "한 번 더" picks from: the songs and when each was last played (§11.10, D-105). */
+  repertoire: Pick<RoutineInput, 'songs' | 'stage' | 'skills' | 'history'>;
 }
 
 /**
@@ -233,6 +233,8 @@ export function SessionScreen() {
   const leftHanded = useSettingsStore((s) => s.settings?.leftHanded ?? false);
   /** The stored attempt of the current item's last run (its suggested tempo drives "이어서 한 번 더"). */
   const [lastAttempt, setLastAttempt] = useState<Attempt | null>(null);
+  /** Songs played in this session — counted as just played when "한 번 더" picks the next repertoire song (D-105). */
+  const [playedSongs, setPlayedSongs] = useState<ReadonlySet<string>>(new Set());
   /** Each item's latest stored attempt: going back shows it again (D-096). */
   const [results, setResults] = useState<ReadonlyMap<string, Attempt>>(() => new Map());
   /** The host opens on the item's latest result: set by moving back, cleared by moving forward or a rerun. */
@@ -268,7 +270,12 @@ export function SessionScreen() {
           // A resumed part can be split again (D-104); the suggested point is behind it.
           splittable: true,
           splitAfterIndex: null,
-          repertoire: { songs: resumed.songs, stage: split.stage, skills: resumed.skills },
+          repertoire: {
+            songs: resumed.songs,
+            stage: split.stage,
+            skills: resumed.skills,
+            history: resumed.history,
+          },
         });
         setSessionId(split.sessionId);
         setResumedSplit(split);
@@ -291,7 +298,12 @@ export function SessionScreen() {
           rest: false,
           splittable: false,
           splitAfterIndex: null,
-          repertoire: { songs: stored.songs, stage: custom.stage, skills: stored.skills },
+          repertoire: {
+            songs: stored.songs,
+            stage: custom.stage,
+            skills: stored.skills,
+            history: stored.history,
+          },
         });
         if (items.length === 0) return;
         const id = newId();
@@ -328,7 +340,12 @@ export function SessionScreen() {
         rest: plan.kind === 'rest',
         splittable: plan.kind !== 'rest' && plan.splitAfterIndex !== null,
         splitAfterIndex: plan.kind === 'rest' ? null : plan.splitAfterIndex,
-        repertoire: { songs: stored.songs, stage: stored.progression.stage, skills: stored.skills },
+        repertoire: {
+          songs: stored.songs,
+          stage: stored.progression.stage,
+          skills: stored.skills,
+          history: stored.history,
+        },
       });
       if (plan.kind === 'rest') return;
       const id = newId();
@@ -449,11 +466,16 @@ export function SessionScreen() {
     void saveSplitProgress(resumedSplit, stateRef.current, now());
   }, [resumedSplit, progressKey, now]);
 
+  const repertoireNow = loaded && {
+    ...loaded.repertoire,
+    history: withSongsPlayed(loaded.repertoire.history, playedSongs),
+  };
+
   /** "이어서 한 번 더" at the ladder's next tempo while block time remains (§7.3-12). */
   const repeat = (() => {
     const item = state ? items[state.index] : undefined;
-    if (!item || !lastAttempt || !loaded || !REPEATABLE_TYPES.has(item.exerciseType)) return undefined;
-    return repeatSuggestion(item, lastAttempt, loaded.repertoire) ?? undefined;
+    if (!item || !lastAttempt || !repertoireNow || !REPEATABLE_TYPES.has(item.exerciseType)) return undefined;
+    return repeatSuggestion(item, lastAttempt, repertoireNow) ?? undefined;
   })();
 
   // Keyboard / pedal between runs (§12.3); during a run the exercise's own keys apply.
@@ -742,13 +764,18 @@ export function SessionScreen() {
             setEndedIndex(state.index);
             setLastAttempt(attempt);
             if (!attempt) return;
+            const songId = (attempt.params as { songId?: unknown } | null)?.songId;
+            if (typeof songId === 'string') {
+              setPlayedSongs((p) => (p.has(songId) ? p : new Set(p).add(songId)));
+            }
             setState((s) => (s ? markRecorded(s, item.id) : s));
             setResults((r) => (r.get(item.id) === attempt ? r : new Map(r).set(item.id, attempt)));
           }}
           renderAfter={(attempt) => {
             const tempo = attempt ? definition.suggestedTempoRetry(attempt.params, attempt.result) : null;
             const repeatable = REPEATABLE_TYPES.has(item.exerciseType) && budget > 0 && attempt !== null;
-            const suggestion = attempt ? repeatSuggestion(item, attempt, loaded.repertoire) : null;
+            const suggestion =
+              attempt && repertoireNow ? repeatSuggestion(item, attempt, repertoireNow) : null;
             return (
               <div className="mt-5 flex flex-wrap gap-3">
                 <div data-primary-action>

@@ -6,7 +6,7 @@ import type { Attempt } from '../../domain/records';
 import { registerAllExercises } from '../../exercises/catalog';
 import { exerciseDefinition } from '../../exercises/registry';
 import { TEST_CONTENT } from '../../exercises/testing/fakes';
-import { repeatSuggestion, sameRunParams } from './repeat';
+import { repeatSuggestion, sameRunParams, withSongsPlayed } from './repeat';
 import { pluginParamsFor } from './routineParams';
 import {
   acknowledgeBreak,
@@ -404,7 +404,7 @@ describe('SPEC v1.1 §11.10 repertoire repeat (M15 review)', () => {
       { subjectKey: `song:${id}`, lastPracticedAt: 0, metrics: { repertoire: metric(1) } },
     ]),
   );
-  const repertoire = { songs: PRACTICE_SONGS, stage: 8, skills };
+  const repertoire = { songs: PRACTICE_SONGS, stage: 8, skills, history: EMPTY_HISTORY };
   const attempt = (params: Record<string, unknown>) =>
     ({ params, result: {}, exerciseType: 'S' }) as unknown as Attempt;
 
@@ -419,6 +419,21 @@ describe('SPEC v1.1 §11.10 repertoire repeat (M15 review)', () => {
     const s = repeatSuggestion(item, attempt({ songId: 's01', mode: 'perform', bpm: 70 }), repertoire);
     expect(s?.params).toMatchObject({ songId: 's03', mode: 'perform' });
     expect(s?.identity).toEqual({ routineKey: 'S|song:s03', reviewOf: null });
+  });
+
+  it('test_withSongsPlayed_songPlayedThisSession_nextSongMovesOnToAnUnplayedOne (D-105)', () => {
+    const three = new Map([...skills, ['song:s05', { ...skills.get('song:s01')!, subjectKey: 'song:s05' }]]);
+    const item = { id: 'r', exerciseType: 'S', block: 'repertoire', key: 'S|song:s03' } as RoutineItem;
+    const history = withSongsPlayed(EMPTY_HISTORY, ['s01', 's03']);
+
+    const s = repeatSuggestion(item, attempt({ songId: 's03', mode: 'perform', bpm: 70 }), {
+      ...repertoire,
+      skills: three,
+      history,
+    });
+
+    // s01 was played earlier today, s05 not at all → s05 (without the session's songs it would be s01 again).
+    expect(s?.params).toMatchObject({ songId: 's05' });
   });
 
   it('outside the repertoire block the suggestion keeps the item (tempo only)', () => {

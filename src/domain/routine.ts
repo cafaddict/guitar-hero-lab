@@ -850,21 +850,35 @@ function memorizeBlock(ctx: Ctx, sec: number, slot: TemplateSlot): Draft[] {
   return song ? [serveSameSubject(ctx, songDraft(ctx, song, sec, 'song', slot))] : [];
 }
 
+/** Sessions since a song was last played — the one count the repertoire block and its "한 번 더" share (D-105). */
+function songSessionsSince(history: PracticeHistory, songId: string): number {
+  return sessionsSince(history, itemKey('S', `song:${songId}`));
+}
+
+/** Repertoire order (D-105): played longest ago first (never played before any), ties in id order. */
+function longestAgoFirst<T extends { id: string }>(history: PracticeHistory, songs: readonly T[]): T[] {
+  const since = (id: string) => songSessionsSince(history, id);
+  return [...songs].sort(
+    (a, b) =>
+      (since(a.id) === since(b.id) ? 0 : since(b.id) > since(a.id) ? 1 : -1) || a.id.localeCompare(b.id),
+  );
+}
+
 /**
- * The repertoire song after `currentSongId` (§11.10 "차례로 친다"): repertoire songs open at the stage in id order,
- * wrapping around, in the hidden stage once memorized. Null when there is no other repertoire song to move to.
+ * The repertoire song to play after `currentSongId` (§11.10, D-105): of the other repertoire songs open at the
+ * stage, the one played longest ago (never played first, ties in id order), in the hidden stage once memorized.
+ * Null when there is no other repertoire song to move to.
  */
 export function nextRepertoireSong(
-  input: Pick<RoutineInput, 'songs' | 'stage' | 'skills'>,
+  input: Pick<RoutineInput, 'songs' | 'stage' | 'skills' | 'history'>,
   currentSongId: string,
 ): { songId: string; mode: 'perform'; chartHidden: boolean; bpm: number } | null {
   const metric = (id: string, name: string) => input.skills.get(`song:${id}`)?.metrics[name]?.best ?? 0;
-  const repertoire = input.songs
-    .filter((s) => s.stage <= input.stage && metric(s.id, 'repertoire') >= 1)
-    .sort((a, b) => a.id.localeCompare(b.id));
-  const others = repertoire.filter((s) => s.id !== currentSongId);
-  if (others.length === 0) return null;
-  const next = others.find((s) => s.id.localeCompare(currentSongId) > 0) ?? others[0]!;
+  const others = input.songs.filter(
+    (s) => s.stage <= input.stage && metric(s.id, 'repertoire') >= 1 && s.id !== currentSongId,
+  );
+  const next = longestAgoFirst(input.history, others)[0];
+  if (!next) return null;
   return {
     songId: next.id,
     mode: 'perform',
@@ -886,13 +900,13 @@ function repertoireBlock(ctx: Ctx, sec: number, slot: TemplateSlot): Draft[] {
       { ...songDraft(ctx, song, sec, 'repertoire', slot, stageOf(song.id)), reviewOf: review.subjectKey },
     ];
   }
-  const since = (id: string) => sessionsSince(input.history, itemKey('S', `song:${id}`));
+  const since = (id: string) => songSessionsSince(input.history, id);
   const repertoire = available.filter(
     (s) => (input.skills.get(`song:${s.id}`)?.metrics.repertoire?.best ?? 0) >= 1,
   );
   const practised = available.filter((s) => Number.isFinite(since(s.id)));
   const pick =
-    [...repertoire].sort((a, b) => since(b.id) - since(a.id) || a.id.localeCompare(b.id))[0] ??
+    longestAgoFirst(input.history, repertoire)[0] ??
     [...practised].sort((a, b) => since(a.id) - since(b.id) || a.id.localeCompare(b.id))[0] ??
     available[0];
   if (!pick) return [];

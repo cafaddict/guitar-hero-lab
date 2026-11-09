@@ -4,6 +4,7 @@
  */
 import type { RoutineItem } from '../../content/schemas';
 import { songById } from '../../content/songs';
+import type { PracticeHistory } from '../../domain/history';
 import type { Attempt } from '../../domain/records';
 import { itemKey, nextRepertoireSong, type RoutineInput } from '../../domain/routine';
 import { exerciseDefinition } from '../../exercises/registry';
@@ -27,13 +28,24 @@ export function sameRunParams(attempt: Attempt | null | undefined): unknown {
 }
 
 /**
- * "이어서 한 번 더" (§7.3-12): the ladder's next tempo — or, in the repertoire block, the next repertoire song
- * (§11.10). Null = no suggestion (repeat at the same params).
+ * The history the session was planned from, with the songs played in this session counted as played now (0
+ * sessions ago) — so "한 번 더" in the repertoire block moves on to songs not played yet today (D-105).
+ */
+export function withSongsPlayed(history: PracticeHistory, songIds: Iterable<string>): PracticeHistory {
+  const appearances = new Map(history.appearances);
+  const now = { session: history.sessionNumber, day: history.practiceDay };
+  for (const id of songIds) appearances.set(itemKey('S', `song:${id}`), now);
+  return { ...history, appearances };
+}
+
+/**
+ * "이어서 한 번 더" (§7.3-12): the ladder's next tempo — or, in the repertoire block, the repertoire song played
+ * longest ago (§11.10, D-105). Null = no suggestion (repeat at the same params).
  */
 export function repeatSuggestion(
   item: RoutineItem,
   attempt: Attempt,
-  repertoire: Pick<RoutineInput, 'songs' | 'stage' | 'skills'>,
+  repertoire: Pick<RoutineInput, 'songs' | 'stage' | 'skills' | 'history'>,
 ): { params: unknown; label: string; identity?: RunIdentity } | null {
   const definition = exerciseDefinition(item.exerciseType);
   if (!definition) return null;
