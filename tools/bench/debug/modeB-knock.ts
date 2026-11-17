@@ -18,10 +18,17 @@ import { buildCases, type ModeBCase } from '../cases';
 import { channel, strumStrings } from '../render';
 import { loadThresholds } from '../thresholds';
 
-const n = Number(process.argv[process.argv.indexOf('--n') + 1] || 600);
+const DEFAULT_N = 600;
+
+/** The case count from `--n <count>`; DEFAULT_N when `--n` is absent or not followed by a positive integer. */
+export function parseN(argv: readonly string[]): number {
+  const i = argv.indexOf('--n');
+  if (i < 0) return DEFAULT_N;
+  const v = Number(argv[i + 1]);
+  return Number.isInteger(v) && v > 0 ? v : DEFAULT_N;
+}
+
 const t = loadThresholds();
-const all = buildCases(t, 'dev').modeB;
-const cases = all.filter((_, i) => i % Math.max(1, Math.floor(all.length / n)) === 0).slice(0, n);
 
 const PRE_S = 0.7;
 const GAP_S = 0.5;
@@ -85,31 +92,38 @@ function restrum(c: ModeBCase, gain: number): Scene {
   return { dry, onset };
 }
 
-for (const [name, scene] of Object.entries(scenes)) {
-  const tally = new Map<string, number>();
-  let noOnset = 0;
-  for (const c of cases) {
-    const { dry, onset } = scene(c);
-    const signal = channel(c, t, dry, onset).signal;
-    const fs = c.sampleRate;
-    // The event nearest the scene's onset (a first strum may also be detected); the true onset when none is near.
-    const events = detectStrums(signal, fs).filter((e) => e.sample >= onset - 0.03 * fs);
-    const take = selectTakeEvent(events, fs);
-    if (!take.ok) noOnset++;
-    const at = take.ok ? take.event.sample : onset;
-    const start = Math.max(0, at - Math.round(0.5 * fs));
-    const samples = signal.slice(start, Math.min(signal.length, at + Math.round(0.4 * fs)));
-    const res = verifyStrum({
-      samples,
-      sampleRate: fs,
-      onsetSample: at - start,
-      voicing: voicingById(c.voicingId),
-      tuning: STANDARD_TUNING,
-      deltaCents: c.deltaGivenCents,
-    });
-    const key = res.verdict === 'RETRY' ? `RETRY:${res.reasons[0]}` : res.verdict;
-    tally.set(key, (tally.get(key) ?? 0) + 1);
+function main(): void {
+  const n = parseN(process.argv);
+  const all = buildCases(t, 'dev').modeB;
+  const cases = all.filter((_, i) => i % Math.max(1, Math.floor(all.length / n)) === 0).slice(0, n);
+  for (const [name, scene] of Object.entries(scenes)) {
+    const tally = new Map<string, number>();
+    let noOnset = 0;
+    for (const c of cases) {
+      const { dry, onset } = scene(c);
+      const signal = channel(c, t, dry, onset).signal;
+      const fs = c.sampleRate;
+      // The event nearest the scene's onset (a first strum may also be detected); the true onset when none is near.
+      const events = detectStrums(signal, fs).filter((e) => e.sample >= onset - 0.03 * fs);
+      const take = selectTakeEvent(events, fs);
+      if (!take.ok) noOnset++;
+      const at = take.ok ? take.event.sample : onset;
+      const start = Math.max(0, at - Math.round(0.5 * fs));
+      const samples = signal.slice(start, Math.min(signal.length, at + Math.round(0.4 * fs)));
+      const res = verifyStrum({
+        samples,
+        sampleRate: fs,
+        onsetSample: at - start,
+        voicing: voicingById(c.voicingId),
+        tuning: STANDARD_TUNING,
+        deltaCents: c.deltaGivenCents,
+      });
+      const key = res.verdict === 'RETRY' ? `RETRY:${res.reasons[0]}` : res.verdict;
+      tally.set(key, (tally.get(key) ?? 0) + 1);
+    }
+    const cells = [...tally].sort((a, b) => a[0].localeCompare(b[0])).map(([k, x]) => `${k} ${x}`);
+    console.log(`${name.padEnd(18)} n=${cases.length} no-onset=${noOnset} · ${cells.join(' · ')}`);
   }
-  const cells = [...tally].sort((a, b) => a[0].localeCompare(b[0])).map(([k, x]) => `${k} ${x}`);
-  console.log(`${name.padEnd(18)} n=${cases.length} no-onset=${noOnset} · ${cells.join(' · ')}`);
 }
+
+if (process.argv[1]?.endsWith('modeB-knock.ts')) main();
