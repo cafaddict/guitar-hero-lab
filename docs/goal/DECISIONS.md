@@ -1206,3 +1206,29 @@ v1.1 goal(M9–M15)이 끝난 뒤 사용자가 실제로 써 보며 요청한 �
 - **회귀 시험**: `beta.test.ts`에 E·Em·G-3f를 30 ms로 다운·업 친 것이 맞게 나오는지 더했다. 1.6.0 코드로 돌리면 실패한다(`expected 'unknown' to be 'down'`).
 - **비용**: 호출 한 번 약 9 ms(1.6.0 약 6 ms, 이 Mac, E 코드 20회 평균). onset마다 worker에서 도는 베타 판독이고 판정 지연 예산과 따로다.
 - **한계**: 합성 스트럼으로만 쟀다. 합성기는 줄마다 음색을 랜덤으로 바꾸지만 실제 기타의 몸통 공진·픽 위치 차이는 더 클 수 있다. 퍼짐 10 ms 미만은 여전히 어렵다. thresholds·bench case는 바꾸지 않았다.
+
+## D-108 스피커 반주 아래 Mode C(베타): 반주 템플릿 스펙트럼 차감
+- **요청(BACKLOG 판정(DSP))**: 앱이 합성하는 반주를 알고 있으니, 분류 전에 스펙트럼 차감으로 반주 성분을 빼서 베타 `modeCUnderBleedAbsErrLe1Rate`(목표 0.85)를 올린다.
+- **원인**: 반주는 사용자가 잡은 코드를 따라 치므로, 코드를 바꾼 직후에는 직전 코드의 반주 스트럼이 분석 창(onset + 40 ms부터 약 170 ms)에 남아 있다. 두 코드의 고유 partial이 함께 피크로 보여 마진이 ±2 dB 안에 들면 보류가 되고, 카운터가 이전 코드에 머물러 바꾼 횟수를 하나 놓치면 다음 번 바꿈도 세지 못한다(오차가 2씩 커진다). base dev에서 실패 29건 중 27건이 과소 집계였다.
+- **결정**:
+  - `classifyPair`·`classifySet`의 입력에 선택 필드 `backing: { samples, offset, gain }`(`BackingReference`)을 더한다. 앱이 렌더한 반주 버퍼, 그 첫 샘플이 녹음에 도착하는 위치(예약 + RTT), 누출 진폭 이득이다. 없으면 이전과 같은 결과다(같은 코드 경로).
+  - 분석 창과 같은 위치(도착 위치만큼 옮김)에서 반주 버퍼의 크기 스펙트럼을 구해 bin마다 `gain × backingOverSubtract × |반주|`를 빼고, 원래 크기의 `backingFloor` 아래로는 내리지 않는다. 기본값 `backingOverSubtract` 1, `backingFloor` 0.05. 뺀 스펙트럼으로 국소 envelope와 partial 증거를 계산한다.
+  - 진폭 이득은 반주 마스킹(`backingMask.bleedGain`, 저역 에너지 상승 비)의 power 이득의 제곱근이다. 벤치(`betaBench.ts`의 `backingReference`)는 전주가 없으므로 모든 반주 이벤트 비의 중앙값을 쓴다 — `detectStrums`의 마스크와 같은 값이다.
+  - 파라미터 탐색(dev, `tools/bench/debug/modeC-bleed.ts`): over 1·1.5·2·3 → 106·107·106·101/120, floor 0.01·0.05·0.2·0.4(over 1) → 106·106·105·104/120. 차이가 1–2건이라 조정 없이 "추정한 반주를 그대로 뺀다"(1, 0.05)를 두었다.
+  - detectorVersion은 이 변경으로 올리지 않는다. 반주 참조를 넘기지 않는 기존 호출(앱의 모든 Mode C 경로, 하드 게이트 벤치)은 결과가 바뀌지 않는다. (같은 날 함께 merge한 D-107이 1.7.0으로 올렸다.)
+- **결과**:
+
+| 지표 | dev 전(a90e4b0) | dev 후 | test 전(BENCHMARK 2026-11-09) | test 후 |
+|---|---|---|---|---|
+| beta `modeCUnderBleedAbsErrLe1RateMin` | 0.7583 | **0.8833** | 0.7333 | **0.9250** |
+| `modeC.absErrLe1RateMin` | 0.9833 | 0.9833 | 1.000 | 1.000 |
+| `modeC.overcountGe2RateMax` | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| `modeC.meanAbsErrMax` | 0.0333 | 0.0333 | 0.0000 | 0.0000 |
+| `modeCSet.top1AccuracyMin` | 0.9960 | 0.9960 | 0.9970 | 0.9970 |
+| `modeCSetStage8to11.top1AccuracyMin` | 1.000 | 1.000 | 0.9990 | 0.9990 |
+
+  - dev는 다른 하드 지표도 모두 값이 같다(perf 제외). test는 exit 0, 하드 지표 모두 PASS.
+  - BACKLOG의 "dev 0.76"과 목표 문장의 "0.7333"은 각각 dev, test 값이다.
+- **남은 실패(dev 14/120)**: 120 케이스 전체에서 바꿈을 놓친 원인을 세면 onset 미검출 11, 마진 ±2 dB 안 보류 24, 열린 줄 distractor에 진 보류 3(나머지는 앞선 누락 때문에 카운터 상태가 이미 같았던 것). 실패 케이스 SNR은 15 dB 6, 25 dB 3, 40 dB 5(전에는 9·4·16). 과대 집계 2건(rel −21, −20 dB, SNR 15)은 마스크를 지난 반주 onset이 많았다(검출 63/정답 14). 이득 추정은 실제 누출 진폭의 중앙값 0.7배이고, 1건은 0(차감 없음)이었다 — 전주로 잰 이득(앱)이면 더 나을 수 있지만 재지 않았다.
+- **앱**: 스피커 반주 중 Mode C 판정은 여전히 "참고"다. 워커의 Mode C 작업에 반주 참조를 넘기는 연결은 이번에 하지 않았다(BACKLOG). 실녹음으로는 재지 않았다.
+- **테스트**: `src/dsp/detectors.test.ts`에 둘을 더했다. Am 위에 C 반주(+14 dB)를 섞으면 참조 없이 Am을 고르지 못하고, 참조가 있으면 Am을 고른다(변경 전 `modeC.ts`에서 실패 확인). 이득 0이면 참조 없을 때와 결과가 같다.

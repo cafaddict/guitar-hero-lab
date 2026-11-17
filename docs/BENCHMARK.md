@@ -2,7 +2,7 @@
 
 > `npm run bench:dsp`(test split)가 생성한다. 손으로 고치지 않는다. GuitarSet 결과는 `npm run bench:guitarset`가 아래 별도 절에 쓴다.
 
-- 실행: 2026-11-16T14:26:46.787Z · split **test** · detectorVersion **1.7.0** · 14406 cases · 227 s
+- 실행: 2026-11-17T00:46:39.429Z · split **test** · detectorVersion **1.7.0** · 14406 cases · 238 s
 - 결과: **ALL THRESHOLDS MET** (임계값: `docs/goal/v1.1/thresholds.json` — v1 계약을 그대로 포함, 무결성 11)
 
 ## 지표 요약
@@ -54,9 +54,9 @@
 | swing | slotAssignmentAccuracyMin | 0.9724 | 0.9500 | PASS | 3008 |
 | backingBleed | strumOnsetF1At25msMin | 0.9863 | 0.9000 | PASS | 2672 |
 | backingBleed | backingHitFalseStrumRateMax | 0.0049 | 0.0500 | PASS | 2022 |
-| perf | verifyStrumMedianMsMax | 9.684 | 20.000 | PASS | 1 |
+| perf | verifyStrumMedianMsMax | 9.711 | 20.000 | PASS | 1 |
 | perf | verifyPluckMedianMsMax | 2.266 | 10.000 | PASS | 1 |
-| perf | workletBlockAvgMsMax | 0.0363 | 0.3000 | PASS | 1 |
+| perf | workletBlockAvgMsMax | 0.0385 | 0.3000 | PASS | 1 |
 | coverage | modeBVerifiableRatioAtLeastDefaultRule | 0.4565 | 0.4565 | PASS | 9 |
 
 ## 베타 — 게이트 아님
@@ -72,7 +72,7 @@
 | legatoFalseOnsetRateMax | 0.0000 | 0.1000 | 예 | 500 |
 | palmMuteAccuracyMin | 0.9990 | 0.8000 | 예 | 1000 |
 | dynamicsAccuracyMin | 1.000 | 0.8500 | 예 | 500 |
-| modeCUnderBleedAbsErrLe1RateMin | 0.7333 | 0.8500 | 아니오 | 120 |
+| modeCUnderBleedAbsErrLe1RateMin | 0.9250 | 0.8500 | 예 | 120 |
 
 ## 스트럼 모드 검증 가능 줄 커버리지 (Stage 0–7, §6.3 기본 규칙)
 
@@ -3699,3 +3699,4 @@
 - 2026-10-12T14:39:02.005Z · detector 1.5.0 · split test · PASS (all thresholds met)
 - 2026-11-09T09:50:09.260Z · detector 1.6.0 · split test · PASS (all thresholds met)
 - 2026-11-16T14:26:46.787Z · detector 1.7.0 · split test · PASS (all thresholds met)
+- 2026-11-17T00:46:39.429Z · detector 1.7.0 · split test · PASS (all thresholds met)

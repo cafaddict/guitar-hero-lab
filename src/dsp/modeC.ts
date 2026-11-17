@@ -43,6 +43,10 @@ export interface ModeCParams {
    * e.g. G5, cannot beat them by a positive margin when their bass is weak — v1.1 D-066). */
   distractorMarginDb: number;
   minChangeIntervalMs: number;
+  /** Backing subtraction: the template magnitude × gain × this factor is removed from each bin. */
+  backingOverSubtract: number;
+  /** Backing subtraction never leaves less than this fraction of a bin's magnitude. */
+  backingFloor: number;
 }
 
 export const DEFAULT_MODE_C_PARAMS: ModeCParams = {
@@ -62,6 +66,8 @@ export const DEFAULT_MODE_C_PARAMS: ModeCParams = {
   strictPeak: false,
   distractorMarginDb: -2,
   minChangeIntervalMs: 300,
+  backingOverSubtract: 1,
+  backingFloor: 0.05,
 };
 
 export const OPEN_STRINGS_VOICING: ChordVoicing = {
@@ -83,20 +89,52 @@ interface Analysis {
   envelope: Float64Array;
 }
 
+/**
+ * Speaker backing the app synthesized and played (SPEC v1.1 §10.12): the buffer as rendered, where its first
+ * sample arrives in `samples` (scheduled time + RTT), and the bleed amplitude gain (recording / buffer).
+ */
+export interface BackingReference {
+  samples: ArrayLike<number>;
+  /** Index in the analysed `samples` at which backing sample 0 arrives. */
+  offset: number;
+  /** Amplitude gain of the leaked backing (√ of the backing mask's power gain). */
+  gain: number;
+}
+
+/**
+ * Magnitude spectral subtraction of the leaked backing: the backing buffer is analysed over the same window
+ * (shifted by its arrival offset) and gain × backingOverSubtract × its magnitude is removed per bin, keeping at
+ * least backingFloor of the original. Partials of a backing chord the player is no longer holding then stop
+ * counting as evidence for that chord.
+ */
+function subtractBacking(
+  spec: Spectrum,
+  backing: BackingReference,
+  start: number,
+  len: number,
+  sampleRate: number,
+  params: ModeCParams,
+): void {
+  if (!(backing.gain > 0)) return;
+  const b = magnitudeSpectrum(backing.samples, start - backing.offset, len, sampleRate, 2);
+  const k = backing.gain * params.backingOverSubtract;
+  for (let i = 0; i < spec.mag.length; i++) {
+    const m = spec.mag[i]!;
+    spec.mag[i] = Math.max(params.backingFloor * m, m - k * b.mag[i]!);
+  }
+}
+
 function analyze(
   samples: ArrayLike<number>,
   sampleRate: number,
   onsetSample: number,
   params: ModeCParams,
+  backing?: BackingReference,
 ): Analysis {
   const len = msToSamples(params.windowMs, sampleRate);
-  const spec = magnitudeSpectrum(
-    samples,
-    onsetSample + msToSamples(params.windowStartMs, sampleRate),
-    len,
-    sampleRate,
-    2,
-  );
+  const start = onsetSample + msToSamples(params.windowStartMs, sampleRate);
+  const spec = magnitudeSpectrum(samples, start, len, sampleRate, 2);
+  if (backing) subtractBacking(spec, backing, start, len, sampleRate, params);
   const noiseEnd = onsetSample - msToSamples(20, sampleRate);
   const noiseStart = noiseEnd - msToSamples(params.noiseSpanMs, sampleRate);
   const spectra: Float64Array[] = [];
@@ -216,6 +254,8 @@ export interface ClassifyInput {
   tuning: Tuning;
   deltaCents?: readonly number[] | undefined;
   params?: ModeCParams;
+  /** Leaked speaker backing to subtract before scoring (omit = no backing, unchanged behaviour). */
+  backing?: BackingReference | undefined;
 }
 
 export function classifyPair(
@@ -225,7 +265,7 @@ export function classifyPair(
 ): PairClassification {
   const t0 = performance.now();
   const params = input.params ?? DEFAULT_MODE_C_PARAMS;
-  const a = analyze(input.samples, input.sampleRate, input.onsetSample, params);
+  const a = analyze(input.samples, input.sampleRate, input.onsetSample, params, input.backing);
   const pa = partialFrequencies(candidates[0], input.tuning, params, input.deltaCents);
   const pb = partialFrequencies(candidates[1], input.tuning, params, input.deltaCents);
   const margin = pairMargin(a, pa, pb, params);
@@ -270,7 +310,7 @@ export function classifySet(
 ): SetClassification {
   const t0 = performance.now();
   const params = input.params ?? DEFAULT_MODE_C_PARAMS;
-  const a = analyze(input.samples, input.sampleRate, input.onsetSample, params);
+  const a = analyze(input.samples, input.sampleRate, input.onsetSample, params, input.backing);
   const partials = candidates.map((c) => partialFrequencies(c, input.tuning, params, input.deltaCents));
   const scores = candidates.map((c, i) => {
     let worst = Number.POSITIVE_INFINITY;

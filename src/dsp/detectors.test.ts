@@ -197,6 +197,37 @@ describe('Mode C', () => {
     expect(set.margin).toBeGreaterThan(0);
   });
 
+  it('classifyPair_backingChordLeakingOverUserChord_subtractsBackingAndPicksUserChord', () => {
+    // Arrange: the user strums Am; the speaker backing plays C 20 ms later, 14 dB louder (gain 5).
+    const user = strum('Am');
+    const backing = strum('C').samples.subarray(Math.round(0.6 * FS));
+    const offset = user.onset + Math.round(0.02 * FS);
+    const mixed = user.samples.slice();
+    for (let i = 0; i < backing.length && offset + i < mixed.length; i++)
+      mixed[offset + i] = mixed[offset + i]! + 5 * backing[i]!;
+    const input = { samples: mixed, sampleRate: FS, onsetSample: user.onset, tuning: STANDARD_TUNING };
+    const pair = [voicingById('C'), voicingById('Am')] as const;
+    // Act
+    const without = classifyPair(input, pair);
+    const withRef = classifyPair({ ...input, backing: { samples: backing, offset, gain: 5 } }, pair);
+    // Assert
+    expect(without.winner).not.toBe(1);
+    expect(withRef.winner).toBe(1);
+  });
+
+  it('classifyPair_backingGainZero_matchesNoBacking', () => {
+    // Arrange
+    const { samples, onset } = strum('Am');
+    const input = { samples, sampleRate: FS, onsetSample: onset, tuning: STANDARD_TUNING };
+    const pair = [voicingById('C'), voicingById('Am')] as const;
+    // Act
+    const plain = classifyPair(input, pair);
+    const zero = classifyPair({ ...input, backing: { samples, offset: 0, gain: 0 } }, pair);
+    // Assert
+    expect(zero.winner).toBe(plain.winner);
+    expect(zero.margin).toBe(plain.margin);
+  });
+
   it('counter counts only confident changes ≥ 300 ms apart and ignores holds', () => {
     const counter = new ChangeCounter(300);
     expect(counter.push({ winner: 0 }, 0)).toBe(false); // starting chord

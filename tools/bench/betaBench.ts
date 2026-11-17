@@ -9,12 +9,18 @@ import { voicingById } from '../../src/content/voicings';
 import { deriveSeed, gaussian, mulberry32, pick, uniform } from '../../src/domain/prng';
 import { STANDARD_TUNING } from '../../src/domain/theory';
 import type { ChordVoicing } from '../../src/domain/voicing';
-import { backingTemplateRises } from '../../src/dsp/backingMask';
+import {
+  type BackingSchedule,
+  backingTemplateRises,
+  bleedGain,
+  DEFAULT_BACKING_MASK_PARAMS,
+  lowBand,
+} from '../../src/dsp/backingMask';
 import { buzzResidual, buzzScore } from '../../src/dsp/beta/buzz';
 import { strumDirection } from '../../src/dsp/beta/direction';
 import { barDynamics, eventLevelsDb } from '../../src/dsp/beta/dynamics';
 import { palmMuteFeatures, palmMuteProbability } from '../../src/dsp/beta/palmMute';
-import { ChangeCounter, classifyPair } from '../../src/dsp/modeC';
+import { type BackingReference, ChangeCounter, classifyPair } from '../../src/dsp/modeC';
 import { DEFAULT_ONSET_PARAMS, detectStrums } from '../../src/dsp/onset';
 import { detectSequenceOnsets, type SequenceSlot, verifySequence } from '../../src/dsp/sequence';
 import { rms } from '../../src/dsp/spectrum';
@@ -472,6 +478,23 @@ function evaluateLegato(c: LegatoCase, t: Thresholds): OutcomeBeta {
   };
 }
 
+/**
+ * What the app knows about the leaked backing: the buffer it rendered, where it arrives (RTT) and the bleed
+ * gain the backing mask measures from the recording (√ of its low-band power gain; no intro here, so the
+ * median over all events, as in detectStrums).
+ */
+export function backingReference(
+  signal: Float32Array,
+  sampleRate: number,
+  backing: Float32Array,
+  offset: number,
+  schedule: BackingSchedule,
+): BackingReference {
+  const p = DEFAULT_BACKING_MASK_PARAMS;
+  const power = bleedGain(lowBand(signal, sampleRate, p), sampleRate, schedule, p);
+  return { samples: backing, offset, gain: Math.sqrt(power) };
+}
+
 function evaluateModeCBleed(c: ModeCBleedCase, t: Thresholds): OutcomeBeta {
   const s = c.sequence;
   const fs = s.sampleRate;
@@ -504,13 +527,13 @@ function evaluateModeCBleed(c: ModeCBleedCase, t: Thresholds): OutcomeBeta {
   for (let i = 0; i < backing.signal.length && offset + i < signal.length; i++)
     signal[offset + i] = signal[offset + i]! + backing.signal[i]! * gain;
   const eventSamples = backing.events.map((e) => Math.round(e.time * fs));
-  const events = detectStrums(signal, fs, DEFAULT_ONSET_PARAMS, {
-    backing: {
-      arrivals: eventSamples.map((e) => offset + e),
-      templateRises: backingTemplateRises(backing.signal, eventSamples, fs),
-      introCount: 0,
-    },
-  });
+  const schedule: BackingSchedule = {
+    arrivals: eventSamples.map((e) => offset + e),
+    templateRises: backingTemplateRises(backing.signal, eventSamples, fs),
+    introCount: 0,
+  };
+  const events = detectStrums(signal, fs, DEFAULT_ONSET_PARAMS, { backing: schedule });
+  const reference = backingReference(signal, fs, backing.signal, offset, schedule);
   const counter = new ChangeCounter();
   const pair = [voicingById(s.pair[0]), voicingById(s.pair[1])] as const;
   for (const e of events) {
@@ -521,6 +544,7 @@ function evaluateModeCBleed(c: ModeCBleedCase, t: Thresholds): OutcomeBeta {
         onsetSample: e.sample,
         tuning: STANDARD_TUNING,
         deltaCents: s.deltaGivenCents,
+        backing: reference,
       },
       pair,
     );
