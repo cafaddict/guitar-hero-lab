@@ -2,7 +2,7 @@
 
 > 대상: `src/dsp/` (순수 TypeScript, Node·브라우저 공용). 근거: SPEC §10, 리서치 02. 파라미터는 **dev split(시드 1000–1999)에서만** 튜닝했다.
 > 벤치마크 결과는 `docs/BENCHMARK.md`(생성 파일), 실녹음(GuitarSet) 분석은 아래 "GuitarSet" 절(M3)에 적는다.
-> detectorVersion: `src/dsp/version.ts` (현재 1.6.0 — Mode B 몸통 노크 거르기(NOT_STRING, 23절). 1.5.0은 Mode A 줄 소리 아님(NOT_STRING)·앞 줄 울림 상쇄·판정 감도(22절). 1.4.0은 v1.1 M11: Mode C 마진 재튜닝, 시퀀스·반주 마스킹·베타 판정기 추가. 1.3.1은 M3 onset 재튜닝·Mode A 강건화). 알고리즘·파라미터가 바뀌면 올린다.
+> detectorVersion: `src/dsp/version.ts` (현재 1.7.0 — 베타 스트럼 방향을 줄별 전사(NNLS)로(24절). 1.6.0은 Mode B 몸통 노크 거르기(NOT_STRING, 23절). 1.5.0은 Mode A 줄 소리 아님(NOT_STRING)·앞 줄 울림 상쇄·판정 감도(22절). 1.4.0은 v1.1 M11: Mode C 마진 재튜닝, 시퀀스·반주 마스킹·베타 판정기 추가. 1.3.1은 M3 onset 재튜닝·Mode A 강건화). 알고리즘·파라미터가 바뀌면 올린다.
 
 ## 0. 공통
 
@@ -219,7 +219,7 @@ M2 설정의 GuitarSet dev 지표: Mode A OK 0.884(n=43), **onset F1 0.734**(P 0
 | 판정기 | 방법(최종) | dev 값 / 목표 | 한계 |
 |---|---|---|---|
 | buzz | 2–8 kHz bin 에너지의 30번째 백분위(= partial 사이 바닥) 상승분 ÷ 음 에너지, 사용자 깨끗한 소리 템플릿 대비 log10 비 0…0.5 → 점수 0…1, ≥ 0.6 의심 | 검출 0.62 / 0.7, 오경보 0.084 / 0.1 | 고정 notch(±30 cents)는 저음 줄 고차 partial이 촘촘하고 B를 몰라 대역 전체를 지워 쓸 수 없었다. KS 모델의 버징은 잘 안 보인다 |
-| direction | 줄마다 다른 줄과 80 Hz 이상 떨어진 고유 partial bin의 상승 시간 무게중심 → 줄 번호 대비 기울기(> 0 다운). 보이싱이 없으면 새 에너지 무게중심 기울기 | 0.54 / 0.85 | 옥타브 관계가 많은 코드는 고유 partial이 적고 이웃 줄 누설이 시각을 끌어당긴다. 개선 후보: 줄별 전사(Murgul et al.) — BACKLOG |
+| direction | 줄별 전사: 40 ms 프레임마다 소리 나는 줄 하나에 고정 배음 template 하나씩(1/h)으로 스펙트럼을 NNLS 분해 → 줄별 activation이 상승분의 절반을 처음 넘는 시각 → 상승분 가중 줄 번호 대비 기울기(> 0 다운, \|기울기\| < 0.2 ms/줄 unknown). 보이싱이 없으면 새 에너지 무게중심 기울기(24절, D-107) | 0.884 / 0.85 | 퍼짐 0–10 ms에서는 0.67–0.69(줄 사이 2 ms 미만). template이 실제 음색과 다르면(픽 위치 comb) 공유 partial을 잘못 나눌 수 있다. 합성으로만 쟀다 |
 | legato | `verifySequence`의 레가토 슬롯: onset이 없어도 기대 음높이가 있으면 HAMMER_OK | 재현 0.992 / 0.7, 오경보 0 / 0.1 | 합성 해머온 기준 |
 | palmMute | 감쇠비 RMS[150..250]/RMS[20..60](잡음 제거)와 [20, 120 ms] 무게중심을 개방 스트럼 기준과 비교한 로지스틱 | 0.999 / 0.8 | 합성 팜뮤트는 감쇠가 뚜렷하다 |
 | dynamics | 기대 슬롯마다 가까운 onset(없으면 슬롯) 시각의 피크 단시간 RMS, 실행 중앙값(짝수 개면 두 가운데 평균) 대비 마디 평균 ≥ +3 dB 세게, ≤ −3 dB 여리게 | 1.000 / 0.85 | 여린 스트럼은 onset 검출기가 놓칠 수 있어 슬롯 기준으로 잰다 |
@@ -316,3 +316,21 @@ M2 설정의 GuitarSet dev 지표: Mode A OK 0.884(n=43), **onset F1 0.734**(P 0
 
 측정값과 한계는 D-106에 적었다. 합성 노크 593/600이 NOT_STRING이고, 합성 Mode B 벤치와 GuitarSet 판정은 바뀌지 않았다. 정답 있는 실녹음 노크로 재지는 못했다.
 
+## 24. 베타 스트럼 방향: 줄별 전사 (1.7.0, D-107)
+
+1.6.0까지는 줄마다 "다른 줄의 partial과 80 Hz 이상 떨어진 고유 partial"의 상승 시각을 썼다. 옥타브·5도 관계가 많은 코드(E, Em, G, D5 등)는 고유 partial이 적거나 없고, 남은 bin에도 이웃 줄의 누설이 들어가 시각이 가운데로 끌렸다. dev 정확도는 0.542였다.
+
+**방법**(`stringOnsetsMs`, `strumDirection`):
+
+1. onset −15 … +100 ms, 1 ms hop, 40 ms Hann 프레임(zero-pad ×2)의 크기 스펙트럼, 60–4000 Hz.
+2. 소리 나는 줄마다 template 하나: partial h·f0·√(1+B·h²)(B = 5·10⁻⁵, f0는 보정 delta 반영), 진폭 1/h, 각 partial은 Hann main lobe(±2/T). 단위 norm으로 맞춘다.
+3. 프레임마다 스펙트럼 ≈ Σ aᵢ·templateᵢ, aᵢ ≥ 0를 NNLS(Gram 행렬 좌표 하강 40회)로 푼다. 공유 partial은 각 template의 나머지 partial이 함께 설명하므로, 옥타브 위 줄이 울리기 시작하면 그 줄의 activation만 오른다.
+4. 줄 onset = activation이 base(처음 5 프레임 최소) + 0.5·(최대 − base)를 처음 넘는 시각(선형 보간). rise = 최대 − base.
+5. 기울기 = rise/max rise 가중 회귀(시각 대 줄 번호, 6번 줄 = 0). \|기울기\| < 0.2 ms/줄이면 unknown, 신뢰도는 \|기울기\|/4 ms(최대 1).
+6. 보이싱이 없으면 기존 새 에너지 무게중심 기울기(12 ms 프레임, −15 … +75 ms) 그대로.
+
+**파라미터**(`DEFAULT_DIRECTION_PARAMS`, dev split에서만 골랐다): `frameMs` 40, `toMs` 100, `alpha` 1, `riseFraction` 0.5, `minSlopeMs` 0.2. 다른 후보(30·50 ms 프레임, alpha 0.7–2, rise 무게중심 방식, 4000 Hz 대신 2500·6000 Hz, 무가중·sqrt·log 가중)는 모두 dev에서 같거나 낮았다(D-107 표).
+
+**비용**: 호출 한 번이 약 9 ms(1.6.0은 약 6 ms, 이 Mac에서 E 코드 20회 평균). 베타 판독은 onset마다 worker에서 돌고, 판정 지표에는 들어가지 않는다.
+
+**한계**: 퍼짐이 10 ms보다 짧으면(줄 사이 2 ms 미만) 정확도가 0.67–0.69로 남는다. template은 음색을 모르므로 픽 위치 comb·몸통 공진이 큰 실제 기타에서는 공유 partial을 잘못 나눌 수 있다. 정답 있는 실녹음으로는 재지 못했다.

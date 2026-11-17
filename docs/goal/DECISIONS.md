@@ -1173,3 +1173,36 @@ v1.1 goal(M9–M15)이 끝난 뒤 사용자가 실제로 써 보며 요청한 �
   - 모든 줄 뮤트 스트럼 1/600이 AMBIGUOUS에서 NOT_STRING으로 바뀌었다. 둘 다 재시도라 기록에는 차이가 없다.
   - Mode A의 "같은 줄 두 번째 NOT_STRING이면 MUTED" 규칙은 스트럼에 두지 않았다. 스트럼에서 같은 RETRY가 두 번 이어지면 기존 규칙대로 한 줄씩 확인을 권한다.
 - **SPEC·thresholds**: 바꾸지 않았다. `verifyStrumMedianMs`는 약 0.4 ms 늘었고 한도(20 ms) 안이다.
+
+## D-107 베타 스트럼 방향을 줄별 전사(NNLS)로 잰다 (detector 1.7.0)
+- **요청(BACKLOG 판정(DSP))**: 스트럼 방향(베타) dev 0.542 / 목표 0.85. 줄별 고유 partial 시각 대신 줄별 전사로 줄 onset을 직접 추정해, 옥타브 관계가 많은 코드에서 이웃 줄 누설을 피한다.
+- **원인**: 1.6.0은 다른 줄과 80 Hz 이상 떨어진 partial만 썼다. E·Em·G·5th 코드는 그런 partial이 적거나 없어서 줄 일부가 빠지고(빠진 줄은 기울기에 안 들어감), 남은 bin의 상승에도 큰 이웃 줄이 섞여 시각이 서로 비슷해졌다. 퍼짐 35–40 ms에서도 dev 0.68이었다.
+- **결정**(식은 `docs/DSP.md` 24절):
+  - 프레임(40 ms)마다 스펙트럼을 줄별 고정 배음 template(1/h, Hann main lobe)의 비음수 합으로 NNLS 분해해 줄별 activation을 얻는다. 줄 onset은 activation이 상승분의 절반을 처음 넘는 시각이다.
+  - 기울기는 줄별 상승분으로 가중한다. 조용하거나 이웃 줄이 대부분 설명하는 줄은 덜 센다.
+  - unknown 기준 `minSlopeMs` 0.5 → 0.2 ms/줄(퍼짐 1 ms 안팎).
+  - 보이싱이 없을 때의 무게중심 fallback은 그대로다(창도 −15 … +75 ms 그대로).
+  - SPEC v1.1 §3.2가 v2로 미룬 "calibration template 기반 NNLS 분해(Mode B 확인 불가 줄)"와는 다르다. 여기서는 베타 방향 판독에만 쓰고, 사용자 템플릿 없이 고정 배음 template을 쓴다. Mode B 판정은 바뀌지 않는다.
+  - 새 의존성 없음. Murgul et al. 같은 학습 모델 대신 같은 생각(줄별 activation)을 고정 template NNLS로 했다.
+- **탐색**(dev split 500건만, 방향 케이스만 다시 돌리는 임시 스크립트; 값은 directionAccuracy):
+
+| 변형 | dev |
+|---|---|
+| 1.6.0 고유 partial | 0.542 |
+| NNLS, 무가중, 40 ms, 절반 상승, minSlope 0.5 | 0.830 |
+| 위 + rise 무게중심(절반 상승 대신) | 0.816 |
+| 위 + 프레임 30 / 50 ms | 0.814 / 0.790 |
+| 위 + alpha 1.5 / 2 | 0.800 / 0.766 |
+| 위 + 상한 2500 / 6000 Hz | 0.824 / 0.826 |
+| NNLS + sqrt / log / 선형 rise 가중 | 0.864 / 0.862 / 0.868 |
+| 선형 가중 + minSlope 0.2 (**채택**) | **0.884** |
+| 선형 가중 + minSlope 0.1 | 0.886 |
+
+  - minSlope는 0.1이 0.002 높지만, 퍼짐 1 ms 아래까지 down/up을 말하는 것은 근거가 약해 0.2로 두었다.
+- **결과**(`bench:dsp:dev`, a90e4b0 대비): `directionAccuracyMin` 0.542 → **0.884**. 다른 하드 지표 49개와 베타 지표 7개는 값이 같다. perf 3개만 실행마다의 잡음 정도로 달랐다(`verifyStrumMedianMs` 9.685 → 9.731, `verifyPluckMedianMs` 2.268 → 2.272, `workletBlockAvgMs` 0.0361 → 0.0360; 방향 판정기는 이 경로에 없다).
+  - 퍼짐별 dev: 0–5 ms 0.69, 5–10 ms 0.67, 10–15 ms 0.92, 15–20 ms 0.86, 20–25 ms 0.98, 25–30 ms 0.97, 30–35 ms 0.98, 35–40 ms 1.00.
+  - 보이싱별로 낮은 것: G7 0.65, Em7·A7·A7sus4·E5 0.76(각 17건 안팎이라 흔들림이 크다).
+- **test split(`bench:dsp`)**: exit 0, 하드 지표 모두 PASS. `directionAccuracyMin` 0.550 → **0.874**. 다른 베타 지표는 base 기록(2026-11-09)과 같다.
+- **회귀 시험**: `beta.test.ts`에 E·Em·G-3f를 30 ms로 다운·업 친 것이 맞게 나오는지 더했다. 1.6.0 코드로 돌리면 실패한다(`expected 'unknown' to be 'down'`).
+- **비용**: 호출 한 번 약 9 ms(1.6.0 약 6 ms, 이 Mac, E 코드 20회 평균). onset마다 worker에서 도는 베타 판독이고 판정 지연 예산과 따로다.
+- **한계**: 합성 스트럼으로만 쟀다. 합성기는 줄마다 음색을 랜덤으로 바꾸지만 실제 기타의 몸통 공진·픽 위치 차이는 더 클 수 있다. 퍼짐 10 ms 미만은 여전히 어렵다. thresholds·bench case는 바꾸지 않았다.

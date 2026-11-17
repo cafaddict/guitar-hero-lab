@@ -90,6 +90,16 @@ describe('SPEC v1.1 §10.11 beta detectors — results are beta, never verdicts'
     expect(['down', 'up', 'unknown']).toContain(fallback.value);
   });
 
+  it('direction: octave-heavy chords at a 30 ms spread are ordered by per-string activation (D-107)', () => {
+    // E, Em and G-3f share many partials between strings (E2/E3/E4, G2/G3); unique-partial timing misread them.
+    for (const id of ['E', 'Em', 'G-3f']) {
+      const args = { sampleRate: FS, onsetSample: ONSET, voicing: voicingById(id), tuning: STANDARD_TUNING };
+      for (const dir of ['down', 'up'] as const) {
+        expect(strumDirection({ ...args, samples: strum(id, dir, 30) }).value).toBe(dir);
+      }
+    }
+  });
+
   it('palm mute: a muted strum is likely muted against the open reference, the open one is not', () => {
     const reference = palmMuteFeatures({
       samples: strum('G-3f', 'down', 15),
