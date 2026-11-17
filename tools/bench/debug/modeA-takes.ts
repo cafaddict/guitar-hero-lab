@@ -11,8 +11,9 @@ import type { Sensitivity } from '../../../src/dsp/types';
 import { buildCases } from '../cases';
 import { channel } from '../render';
 import { loadThresholds } from '../thresholds';
+import { countArg } from './args';
 
-const n = Number(process.argv[process.argv.indexOf('--n') + 1] || 120);
+const n = countArg(process.argv, 120);
 const t = loadThresholds();
 const base = buildCases(t, 'dev').modeA.filter((c) => c.condition === 'ok');
 const targets: ChordPluckTarget[] = ['clean', 'wrong-up', 'wrong-down', 'muted', 'replucked', 'knock'];

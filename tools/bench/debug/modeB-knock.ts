@@ -17,15 +17,13 @@ import { selectTakeEvent } from '../../../src/dsp/take';
 import { buildCases, type ModeBCase } from '../cases';
 import { channel, strumStrings } from '../render';
 import { loadThresholds } from '../thresholds';
+import { countArg } from './args';
 
 const DEFAULT_N = 600;
 
 /** The case count from `--n <count>`; DEFAULT_N when `--n` is absent or not followed by a positive integer. */
 export function parseN(argv: readonly string[]): number {
-  const i = argv.indexOf('--n');
-  if (i < 0) return DEFAULT_N;
-  const v = Number(argv[i + 1]);
-  return Number.isInteger(v) && v > 0 ? v : DEFAULT_N;
+  return countArg(argv, DEFAULT_N);
 }
 
 const t = loadThresholds();
