@@ -232,6 +232,9 @@ describe('S play-along across a pause (D-085)', () => {
     const pausedAt = t.clock.t;
     expect(t.output.backings[0]!.stopped).toBe(true);
     expect(masked()?.arrivals.every((s) => s <= t.mic.captureSampleOf(pausedAt))).toBe(true);
+    // Mode C's backing reference stops where the buffer stopped playing (D-109).
+    expect(masked()?.samples).toBe(t.output.backings[0]!.samples);
+    expect(masked()?.played).toBe(Math.round((pausedAt - t.output.backings[0]!.at) * 48000));
     runTo(pausedAt + 2);
     runner.command('pause');
     // Rendered before the count-in is scheduled: the intro is bar 3's chord, then bars 3….
@@ -246,6 +249,9 @@ describe('S play-along across a pause (D-085)', () => {
     expect(masked()).toMatchObject({ gain: t.mic.bleedGain });
     expect(masked()?.arrivals[0]).toBe(t.mic.captureSampleOf(g2 - BAR_S));
     expect(masked()?.arrivals).toHaveLength((1 + BARS - 3) * 4);
+    expect(masked()?.samples).toBe(t.output.backings[1]!.samples);
+    expect(masked()?.start).toBe(t.mic.captureSampleOf(g2 - BAR_S));
+    expect(masked()?.played).toBeUndefined();
   });
 
   it('a bleed answer arriving after the pause is ignored; the resumed backing measures again', async () => {

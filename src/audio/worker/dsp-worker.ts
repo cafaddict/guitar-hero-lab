@@ -12,7 +12,7 @@ import { eventLevelsDb } from '../../dsp/beta/dynamics';
 import { palmMuteProbability } from '../../dsp/beta/palmMute';
 import { verifyPluck, verifySilentString } from '../../dsp/modeA';
 import { verifyStrum } from '../../dsp/modeB';
-import { classifyPair, classifySet } from '../../dsp/modeC';
+import { type BackingReference, classifyPair, classifySet } from '../../dsp/modeC';
 import { DEFAULT_ONSET_PARAMS, refineOnset } from '../../dsp/onset';
 import { estimateRtt } from '../../dsp/rtt';
 import { verifySequence } from '../../dsp/sequence';
@@ -99,6 +99,21 @@ function betaReadings(
   };
 }
 
+/**
+ * Mode C backing reference of a segment (D-108, D-109): the job's buffer as a view (no copy) cut where a pause
+ * stopped it, its arrival relative to the segment and the amplitude gain (√ of the mask's power gain).
+ */
+function backingReference(
+  backing: NonNullable<Extract<Job, { kind: 'songStrum' }>['backing']>,
+  segmentStart: number,
+): BackingReference {
+  return {
+    samples: backing.played === undefined ? backing.samples : backing.samples.subarray(0, backing.played),
+    offset: backing.start - segmentStart,
+    gain: Math.sqrt(backing.gain),
+  };
+}
+
 function judge(segment: Float32Array, onsetIndex: number): unknown {
   if (!job) return null;
   if (job.kind === 'onsets') return job.beta ? { beta: betaReadings(segment, onsetIndex, job.beta) } : null;
@@ -147,12 +162,9 @@ function judge(segment: Float32Array, onsetIndex: number): unknown {
       return { pair, strum };
     }
     case 'songStrum': {
-      const set = classifySet(
-        { ...base, tuning: STANDARD_TUNING, deltaCents: job.deltaCents },
-        job.voicings,
-        (v) => classOfVoicing(v.id),
-      );
-      if (!job.backing || !segmentOrigin) return { keep: true, set };
+      const input = { ...base, tuning: STANDARD_TUNING, deltaCents: job.deltaCents };
+      if (!job.backing || !segmentOrigin)
+        return { keep: true, set: classifySet(input, job.voicings, (v) => classOfVoicing(v.id)) };
       // Arrivals relative to this segment; the mask re-refines an early-timed weak onset like the benchmark.
       const origin = segmentOrigin;
       const frameLength = Math.round((DEFAULT_ONSET_PARAMS.frameMs / 1000) * sampleRate);
@@ -169,6 +181,11 @@ function judge(segment: Float32Array, onsetIndex: number): unknown {
         (_i, from) =>
           refineOnset(segment, origin.coarse, frameLength, sampleRate, DEFAULT_ONSET_PARAMS, from),
       )[0]!;
+      const set = classifySet(
+        { ...input, backing: backingReference(job.backing, origin.segmentStart) },
+        job.voicings,
+        (v) => classOfVoicing(v.id),
+      );
       return { keep, set };
     }
     case 'set':

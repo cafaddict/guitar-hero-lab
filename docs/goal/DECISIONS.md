@@ -1232,3 +1232,33 @@ v1.1 goal(M9–M15)이 끝난 뒤 사용자가 실제로 써 보며 요청한 �
 - **남은 실패(dev 14/120)**: 120 케이스 전체에서 바꿈을 놓친 원인을 세면 onset 미검출 11, 마진 ±2 dB 안 보류 24, 열린 줄 distractor에 진 보류 3(나머지는 앞선 누락 때문에 카운터 상태가 이미 같았던 것). 실패 케이스 SNR은 15 dB 6, 25 dB 3, 40 dB 5(전에는 9·4·16). 과대 집계 2건(rel −21, −20 dB, SNR 15)은 마스크를 지난 반주 onset이 많았다(검출 63/정답 14). 이득 추정은 실제 누출 진폭의 중앙값 0.7배이고, 1건은 0(차감 없음)이었다 — 전주로 잰 이득(앱)이면 더 나을 수 있지만 재지 않았다.
 - **앱**: 스피커 반주 중 Mode C 판정은 여전히 "참고"다. 워커의 Mode C 작업에 반주 참조를 넘기는 연결은 이번에 하지 않았다(BACKLOG). 실녹음으로는 재지 않았다.
 - **테스트**: `src/dsp/detectors.test.ts`에 둘을 더했다. Am 위에 C 반주(+14 dB)를 섞으면 참조 없이 Am을 고르지 못하고, 참조가 있으면 Am을 고른다(변경 전 `modeC.ts`에서 실패 확인). 이득 0이면 참조 없을 때와 결과가 같다.
+
+## D-109 앱 워커가 스피커 반주 아래 Mode C(베타)에 반주 참조를 넘긴다
+- **요청(BACKLOG 판정(DSP))**: D-108로 `classifySet`·`classifyPair`는 반주 참조를 받으면 반주 스펙트럼을 빼지만, 앱 워커는 넘기지 않았다. 연습곡 연주의 `songStrum` 작업이 스피커 반주일 때 넘기게 연결한다.
+- **결정**:
+  - `songStrum.backing`(protocol)에 `samples`(러너가 `renderBackingFrom`으로 렌더해 재생한 버퍼), `start`(버퍼 첫 샘플의 도착 캡처 샘플 = 예약 시각 + RTT, 마스크 `arrivals`와 같은 기준), `played`(일시정지가 멈춘 경우 재생된 버퍼 샘플 수)를 더한다. `backing`이 있으면 `samples`·`start`는 꼭 있어야 하고(러너는 늘 함께 보낸다), `played`는 일시정지로 반주를 잘랐을 때만 넣는다(없으면 버퍼 전체).
+  - 워커는 segment마다 `BackingReference { samples: played 전까지의 subarray, offset: start − segmentStart, gain: √gain }`을 만들어 `classifySet`에 넘긴다. 이득은 전주로 잰 `bleedGain`(power 비)의 제곱근으로 D-108과 같은 변환이다. `backing`이 없으면(반주 없음·이어폰·전주 이득을 아직 모름) 이전과 같은 호출이다.
+  - 버퍼는 작업이 바뀔 때만(전주 이득 도착, 일시정지로 마스크를 자를 때, 이어 하기) 작업과 함께 워커로 복사된다. segment마다 복사하지 않는다(subarray는 view). 별도 메시지·`ExerciseMic` 인터페이스 변경 없이 작업 하나로 보낸다.
+  - 일시정지: 반주가 멈춘 시각 뒤의 버퍼는 빼지 않는다(`played`). 이어 하기는 새로 렌더한 버퍼로 바꾼다.
+  - 스피커 반주 중 코드 확인의 "참고" 표시는 바꾸지 않는다(실녹음 결과를 본 뒤 정한다). detectorVersion도 그대로다. 판정기 코드(`spectrum.ts`·`modeC.ts`)는 아래 처리 시간 정리로 바뀌었지만 결과 값을 바꾸지 않는 정리이고, bench 두 split의 판정 지표가 작업 전과 같다.
+- **처리 시간**(이 Mac, 실제 `dsp-worker.ts`를 Node에서 돌려 posted `processingMs`를 읽음, 2분 녹음의 0.9 s segment 159개 × 3번, 반주 G C D Em 위에 Am/Em 스트럼): 참조 연결만 했을 때 스피커 경로 중앙값이 +0.22 ms(약 +4 %, 반주 크기 스펙트럼 FFT 한 번) 늘었다. 리뷰(round 1)가 base 이하를 요구해, profile(`realFft` 36 %, `magnitudeSpectrum` 16 %, `localEnvelope` 10 %, `medianSpectrum` 9.5 %)을 보고 결과 값을 바꾸지 않는 정리 세 가지를 더했다:
+  - `medianSpectrum`: bin마다 하던 `Float64Array#sort`를 열 길이 ≤ 32에서 삽입 정렬로(같은 오름차순 결과, Mode C는 열 8개).
+  - `magnitudeSpectrum`: Hann 창 합(`windowSum`)을 길이별로 한 번만 계산(같은 합산 순서).
+  - Mode C `analyze`: `magnitudeSpectrum`이 늘 새 배열을 돌려주므로 잡음 스펙트럼의 `.slice()` 복사를 뺐다.
+  - 같은 스크립트로 base(121cac8)·참조만 연결(ecd9a82)·정리 후를 두 번 번갈아 잰 중앙값: 스피커 경로 5.29–5.38 / 5.60–5.65 / **5.07–5.12 ms**, 반주 없음 4.65–4.72 / 4.63–4.70 / **4.16–4.26 ms**. 첫 session의 base 값(5.05–5.10)과 절대값이 다른 것은 기계 상태 차이라서 같은 실행 안에서 비교한다. keep=false onset의 Mode C를 건너뛰는 안은 결과 모양이 바뀌어 하지 않았다.
+  - 2분 반주 버퍼(23 MB) structured clone은 약 3 ms이고 작업이 바뀔 때만 일어난다.
+- **RTT·이득 오차(dev 합성, `tools/bench/debug/modeC-refErr.ts`, n=120)**: 도착 위치 오차는 마스크와 참조를 함께 옮기고 이득 오차는 참조에만 준다. absErr ≤ 1 비율:
+
+| 도착 위치 오차 | 참조 없음 | 이득 ×0.5 | 이득 ×1 | 이득 ×2 |
+|---|---|---|---|---|
+| −30 ms | 0.967 | 0.967 | 0.967 | 0.967 |
+| −10 ms | 0.833 | 0.858 | 0.908 | 0.942 |
+| 0 | 0.758 | 0.833 | 0.883 | 0.883 |
+| +10 ms | 0.758 | 0.825 | 0.892 | 0.900 |
+| +30 ms | 0.892 | 0.917 | 0.933 | 0.908 |
+
+  - 참조 없음보다 낮아지는 조건은 없었다. 그래서 참조를 끄는 안전장치는 제안하지 않는다. 0 ms의 두 값은 D-108의 벤치 값(0.758, 0.883)과 같다. 이득 ×1은 벤치의 추정(전주 없이 모든 이벤트의 중앙값, 실제 누출의 약 0.7배) 기준이다. 오차가 마스크를 함께 옮겨서 참조 없음 값도 오차마다 다르다(−30 ms에서 높은 것은 마스크 쪽 효과이고 이번에 따지지 않았다).
+- **시험**: `dspWorker.test.ts` — 스피커 경로에서 워커의 결과가 같은 segment에 `classifySet(…, backing)`을 직접 부른 결과와 같다(점수·top·margin; 변경 전 워커에서 실패 확인), 일시정지로 멈춘 뒤의 창은 참조 없는 결과와 같다, `backing` 없는 작업은 참조 없는 `classifySet`과 같다(변경 전 워커에서도 통과). 러너 시험(`backing.test.ts`, `pause.test.tsx`)은 버퍼·`start`(RTT 30 ms 포함)·`played`를 확인한다.
+- **벤치**: 작업 전(121cac8)과 후 `bench:dsp:dev`·`bench:dsp` 모두 exit 0, 하드 gate 모두 PASS, perf 세 줄을 뺀 모든 지표 값이 같다(벤치는 워커를 거치지 않는다). perf 줄은 실행마다 흔들리고 위 정리의 몫도 섞여 있다(ai-lab 검증의 작업 전·마지막 commit 로그에서 `verifyStrum` 중앙값 dev 9.63 → 9.27 ms, test 9.64 → 9.40 ms). 베타 버징 두 줄의 FAIL은 작업 전과 같다.
+- **SPEC**: 고치지 않는다. v1.1 SPEC은 끝난 goal의 조건문이 SHA-256으로 고정한 파일이고, goal kit(2026-10-09) 뒤의 결정도 SPEC은 그대로 두고 DECISIONS·DSP.md에만 적었다. 반주 참조 계약(버퍼·도착 위치·이득·일시정지/이어 하기)은 이 결정과 DSP 26절에 둔다. (ai-lab run은 §10.12에 문단을 더했지만, 일감 글이 SPEC 수정을 잘못 요구한 것이라 merge 때 되돌렸다.)
+- **thresholds·bench**: 바꾸지 않았다. 실녹음(스피커·방)으로는 재지 못했다 — MANUAL_VALIDATION 5a에 절차를 더했다.

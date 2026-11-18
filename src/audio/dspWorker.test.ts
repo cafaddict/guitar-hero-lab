@@ -3,9 +3,13 @@
  * judgement carries detectorVersion and processingMs, pooled buffers go back to the capture worklet.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { voicingById } from '../content/voicings';
-import { midiToHz } from '../domain/theory';
+import { patternById } from '../content/patterns';
+import { classOfVoicing, voicingById } from '../content/voicings';
+import { midiToHz, STANDARD_TUNING } from '../domain/theory';
+import { backingTemplateRises } from '../dsp/backingMask';
+import { type BackingReference, classifySet, type SetClassification } from '../dsp/modeC';
 import { DEFAULT_RTT_PARAMS, rttProbe } from '../dsp/rtt';
+import { renderBacking } from '../dsp/synth/backing';
 import { randomTimbre, renderNote } from '../dsp/synth/note';
 import { DETECTOR_VERSION } from '../dsp/version';
 import type { WorkerToMain } from './worker/protocol';
@@ -379,7 +383,13 @@ describe('dsp worker — v1.1 requests', () => {
       job: {
         kind: 'songStrum',
         voicings,
-        backing: { arrivals: [500_000 + 24_000], templateRises: [1], gain: 1e-9 },
+        backing: {
+          arrivals: [500_000 + 24_000],
+          templateRises: [1],
+          gain: 1e-9,
+          samples: new Float32Array(FS),
+          start: 500_000,
+        },
       },
     });
     fromCapture({
@@ -397,7 +407,13 @@ describe('dsp worker — v1.1 requests', () => {
       job: {
         kind: 'songStrum',
         voicings,
-        backing: { arrivals: [600_000 + 24_000], templateRises: [1], gain: 1e9 },
+        backing: {
+          arrivals: [600_000 + 24_000],
+          templateRises: [1],
+          gain: 1e9,
+          samples: new Float32Array(FS),
+          start: 600_000,
+        },
       },
     });
     fromCapture({
@@ -409,6 +425,121 @@ describe('dsp worker — v1.1 requests', () => {
       samples,
     });
     expect((lastOf('onset')!.result as { keep: boolean }).keep).toBe(false);
+  });
+
+  describe('songStrum Mode C backing reference (D-109)', () => {
+    // A recording: the user strums Am at 1.48 s; the speaker backing (C, one strum per beat at 80 BPM, so one
+    // at 1.5 s) leaks with amplitude gain 2 after a 20 ms round trip. Capture sample = CAPTURE + recording index.
+    const CAPTURE = 2_000_000;
+    const RTT = Math.round(0.02 * FS);
+    const AMP = 2;
+    const backing = renderBacking({
+      chords: [voicingById('C')],
+      pattern: patternById('P0'),
+      bpm: 80,
+      bars: 2,
+      sampleRate: FS,
+      model: 'karplus-strong',
+      seed: 7,
+    });
+    const userStrum = renderBacking({
+      chords: [voicingById('Am')],
+      pattern: patternById('P0'),
+      bpm: 80,
+      bars: 1,
+      sampleRate: FS,
+      model: 'karplus-strong',
+      seed: 3,
+      bassDb: -200,
+    }).signal.subarray(0, Math.round(0.7 * FS));
+    const userOnset = Math.round(1.48 * FS);
+    const recording = new Float32Array(backing.signal.length + RTT);
+    for (let i = 0; i < userStrum.length; i++) recording[userOnset + i] = userStrum[i]!;
+    for (let i = 0; i < backing.signal.length; i++) recording[RTT + i]! += AMP * backing.signal[i]!;
+    const eventSamples = backing.events.map((e) => Math.round(e.time * FS));
+    const voicings = [voicingById('C'), voicingById('Am'), voicingById('G-3f')];
+    const segmentStart = CAPTURE + userOnset - Math.round(0.5 * FS);
+    const segment = () =>
+      recording.slice(segmentStart - CAPTURE, segmentStart - CAPTURE + Math.round(0.9 * FS));
+    const speakerJob = (played?: number) => ({
+      kind: 'songStrum',
+      voicings,
+      backing: {
+        arrivals: eventSamples.map((e) => CAPTURE + RTT + e),
+        templateRises: backingTemplateRises(backing.signal, eventSamples, FS),
+        gain: AMP * AMP,
+        samples: backing.signal,
+        start: CAPTURE + RTT,
+        ...(played === undefined ? {} : { played }),
+      },
+    });
+    /** Sends the segment; returns the worker's set result and the refined onset (segment index). */
+    const judgeSegment = () => {
+      const samples = segment();
+      fromCapture({
+        type: 'segment',
+        onsetSample: CAPTURE + userOnset,
+        segmentStart,
+        strength: 5,
+        broadband: true,
+        samples,
+      });
+      const onset = lastOf('onset')!;
+      return {
+        set: (onset.result as { set: SetClassification }).set,
+        onsetIndex: onset.sample - segmentStart,
+      };
+    };
+    const direct = (onsetIndex: number, reference?: BackingReference) =>
+      classifySet(
+        {
+          samples: segment(),
+          sampleRate: FS,
+          onsetSample: onsetIndex,
+          tuning: STANDARD_TUNING,
+          ...(reference ? { backing: reference } : {}),
+        },
+        voicings,
+        (v) => classOfVoicing(v.id),
+      );
+    // Everything but the timing: top, margin, every score, detectorVersion.
+    const decision = (s: SetClassification) => ({ ...s, processingMs: 0 });
+
+    it('songStrum_speakerBacking_setEqualsDirectClassifySetWithBackingReference', () => {
+      // Arrange
+      send({ type: 'job', job: speakerJob() });
+      // Act
+      const { set, onsetIndex } = judgeSegment();
+      // Assert: same as calling classifySet with the buffer, its arrival in the segment and √(power gain).
+      const expected = direct(onsetIndex, {
+        samples: backing.signal,
+        offset: CAPTURE + RTT - segmentStart,
+        gain: AMP,
+      });
+      expect(decision(set)).toEqual(decision(expected));
+      // The reference changed the scores (the backing C partials were subtracted).
+      expect(set.scores).not.toEqual(direct(onsetIndex).scores);
+    });
+
+    it('songStrum_backingStoppedBeforeStrum_subtractsNothingFromThatWindow', () => {
+      // Arrange: a pause stopped the backing at 1.2 s, before the user's strum window.
+      send({ type: 'job', job: speakerJob(Math.round(1.2 * FS)) });
+      // Act
+      const { set, onsetIndex } = judgeSegment();
+      // Assert
+      expect(decision(set)).toEqual(decision(direct(onsetIndex)));
+    });
+
+    it('songStrum_noBacking_setEqualsDirectClassifySetWithoutReference', () => {
+      // Arrange: earphones / no backing — the job has no backing (the path before D-109).
+      send({ type: 'job', job: { kind: 'songStrum', voicings } });
+      // Act
+      const { set, onsetIndex } = judgeSegment();
+      const result = lastOf('onset')!.result as { keep: boolean };
+      // Assert
+      expect(result.keep).toBe(true);
+      expect(decision(set)).toEqual(decision(direct(onsetIndex)));
+    });
   });
 
   it('bleedGain: the intro events give the observed / template rise ratio', () => {

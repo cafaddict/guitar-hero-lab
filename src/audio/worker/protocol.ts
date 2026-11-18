@@ -78,7 +78,8 @@ export const jobSchema = z.discriminatedUnion('kind', [
   /**
    * Song perform/hidden with a microphone (SPEC v1.1 §11.10, §8.6): Mode C set scores for the chord check and,
    * when the backing plays on speakers, whether the onset is the user's strum or backing bleed (§10.12) —
-   * `arrivals` are capture samples of the backing events (scheduled time + RTT).
+   * `arrivals` are capture samples of the backing events (scheduled time + RTT) — and the backing reference
+   * Mode C subtracts before scoring (D-108, D-109).
    */
   z.object({
     kind: z.literal('songStrum'),
@@ -88,7 +89,14 @@ export const jobSchema = z.discriminatedUnion('kind', [
       .object({
         arrivals: z.array(z.number()),
         templateRises: z.array(z.number()),
+        /** Bleed power gain from the intro bar (the mask's); Mode C uses its square root. */
         gain: z.number().min(0),
+        /** The backing buffer as rendered and played; sent once per job update, never per segment. */
+        samples: z.custom<Float32Array>((v) => v instanceof Float32Array),
+        /** Capture sample at which `samples[0]` arrives (scheduled start + RTT, like `arrivals`). */
+        start: z.number(),
+        /** Buffer samples actually played before a pause stopped it (absent = the whole buffer). */
+        played: z.number().int().min(0).optional(),
       })
       .optional(),
   }),

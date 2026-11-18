@@ -25,6 +25,17 @@ import { GridRecorder } from '../gridRecorder';
 import type { ExerciseContext, JudgedEvent, RunnerCommand } from '../types';
 
 /** Renders the play-along (one intro bar + the bars to play) at the device sample rate (§8.6). */
+/** The playing backing as the worker sees it: event arrivals and buffer arrival in audio-clock seconds. */
+interface MaskedBacking {
+  arrivals: number[];
+  templateRises: number[];
+  signal: Float32Array;
+  /** Audio-clock time the buffer's first sample arrives at the microphone (scheduled start + RTT). */
+  start: number;
+  /** Buffer samples played before a pause stopped it (absent = still playing). */
+  played?: number;
+}
+
 export type BackingRenderer = (chords: readonly string[], patternId: string, bpm: number) => RenderedBacking;
 
 /** Audio kept before each intro event when the bleed gain is measured (pre-rise window + filter settling). */
@@ -178,8 +189,8 @@ export class SongRunner extends BaseRunner<SongResult, SongView> {
   private backingEpoch = 0;
   /** Bleed gain measured from the first intro on speakers; a resumed backing reuses it (§10.12, D-085). */
   private bleedGain: number | null = null;
-  /** Backing events in the worker's mask (audio-clock arrivals), to cut them at a pause. */
-  private backingMask: { arrivals: number[]; templateRises: number[] } | null = null;
+  /** Backing in the worker's mask and Mode C reference (audio-clock arrivals), to cut it at a pause. */
+  private backingMask: MaskedBacking | null = null;
   /** Stops the "들어 보기" playback; null when none is playing. */
   private stopListen: (() => void) | null = null;
   /** Audio-clock time the listen playback (with its ring-out) ends. */
@@ -425,22 +436,40 @@ export class SongRunner extends BaseRunner<SongResult, SongView> {
     if (!mask || this.bleedGain === null) return;
     const until = now + (this.ctx.calibration?.rttMs ?? 0) / 1000;
     const kept = mask.arrivals.flatMap((t, i) => (t <= until ? [i] : []));
+    // The buffer stopped playing at `now`: Mode C must not subtract what was never played.
+    const played = Math.max(0, Math.round((until - mask.start) * this.ctx.output.sampleRate()));
     this.applyMask(
-      kept.map((i) => mask.arrivals[i]!),
-      kept.map((i) => mask.templateRises[i]!),
+      {
+        arrivals: kept.map((i) => mask.arrivals[i]!),
+        templateRises: kept.map((i) => mask.templateRises[i]!),
+        signal: mask.signal,
+        start: mask.start,
+        played: Math.min(played, mask.played ?? played),
+      },
       this.bleedGain,
     );
   }
 
-  /** Points the worker's backing mask at these events (audio-clock arrivals). */
-  private applyMask(arrivals: number[], templateRises: number[], gain: number): void {
+  /**
+   * Points the worker's backing mask at these events and gives Mode C the backing reference: the rendered
+   * buffer, where its first sample arrives (scheduled start + RTT, the arrivals' clock) and the bleed gain
+   * (D-109). The buffer travels with the job, once per update, never per strum.
+   */
+  private applyMask(backing: MaskedBacking, gain: number): void {
     const mic = this.ctx.audio;
     const job = this.songJob;
     if (!mic || !this.recorder || !job || job.kind !== 'songStrum') return;
-    this.backingMask = { arrivals, templateRises };
+    this.backingMask = backing;
     this.recorder.updateJob({
       ...job,
-      backing: { arrivals: arrivals.map((t) => mic.captureSampleOf(t)), templateRises, gain },
+      backing: {
+        arrivals: backing.arrivals.map((t) => mic.captureSampleOf(t)),
+        templateRises: backing.templateRises,
+        gain,
+        samples: backing.signal,
+        start: mic.captureSampleOf(backing.start),
+        ...(backing.played === undefined ? {} : { played: backing.played }),
+      },
     });
   }
 
@@ -483,9 +512,10 @@ export class SongRunner extends BaseRunner<SongResult, SongView> {
       fs,
     );
     const arrivals = backing.events.map((e) => start + e.time + rtt);
+    const masked: MaskedBacking = { arrivals, templateRises, signal: backing.signal, start: start + rtt };
     // A resumed backing plays on the same output: the gain measured from the first intro still holds.
     if (this.bleedGain !== null) {
-      this.applyMask(arrivals, templateRises, this.bleedGain);
+      this.applyMask(masked, this.bleedGain);
       return;
     }
     // Intro events inside the capture ring: at slow tempos (≤ 61 BPM) the intro bar is longer than the ring.
@@ -507,7 +537,7 @@ export class SongRunner extends BaseRunner<SongResult, SongView> {
         // updates too.
         if (this.recorder !== recorder || epoch !== this.backingEpoch || this.phase === 'done') return;
         this.bleedGain = gain;
-        this.applyMask(arrivals, templateRises, gain);
+        this.applyMask(masked, gain);
       })
       .catch(() => {
         // Without the gain the strums are judged unmasked; the chord check is "참고" anyway.

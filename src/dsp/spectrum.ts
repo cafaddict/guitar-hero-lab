@@ -13,6 +13,18 @@ export interface Spectrum {
   binHz: number;
 }
 
+/** Hann window sums per length (hann() itself is cached, so its sum never changes). */
+const hannSums = new Map<number, number>();
+
+function hannSum(length: number, w: Float64Array): number {
+  let s = hannSums.get(length);
+  if (s === undefined) {
+    s = windowSum(w);
+    hannSums.set(length, s);
+  }
+  return s;
+}
+
 const scratch = new Map<number, { buf: Float64Array; re: Float64Array; im: Float64Array }>();
 
 function scratchFor(n: number) {
@@ -50,7 +62,7 @@ export function magnitudeSpectrum(
   realFft(buf, fftSize, s.re, s.im);
   const bins = fftSize / 2 + 1;
   const mag = out && out.length >= bins ? out : new Float64Array(bins);
-  const scale = 2 / windowSum(w);
+  const scale = 2 / hannSum(length, w);
   for (let k = 0; k < bins; k++) mag[k] = Math.hypot(s.re[k]!, s.im[k]!) * scale;
   return { mag, fftSize, sampleRate, binHz: sampleRate / fftSize };
 }
@@ -92,6 +104,19 @@ export function partialPeak(spec: Spectrum, hz: number, tolCents: number): Parti
   return { mag: Math.exp(peakLog), hz: (best + delta) * spec.binHz, bin: best };
 }
 
+/** Ascending in-place sort for the few spectra of a median (cheaper than TypedArray#sort per bin). */
+function insertionSort(a: Float64Array): void {
+  for (let i = 1; i < a.length; i++) {
+    const v = a[i]!;
+    let j = i - 1;
+    while (j >= 0 && a[j]! > v) {
+      a[j + 1] = a[j]!;
+      j--;
+    }
+    a[j + 1] = v;
+  }
+}
+
 /** Median of each bin across several spectra (noise floor estimate). */
 export function medianSpectrum(spectra: readonly Float64Array[]): Float64Array {
   const first = spectra[0];
@@ -100,7 +125,8 @@ export function medianSpectrum(spectra: readonly Float64Array[]): Float64Array {
   const column = new Float64Array(spectra.length);
   for (let k = 0; k < first.length; k++) {
     for (let j = 0; j < spectra.length; j++) column[j] = spectra[j]![k]!;
-    column.sort();
+    if (column.length <= 32) insertionSort(column);
+    else column.sort();
     const mid = column.length >> 1;
     out[k] = column.length % 2 ? column[mid]! : 0.5 * (column[mid - 1]! + column[mid]!);
   }

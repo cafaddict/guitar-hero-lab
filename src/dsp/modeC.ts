@@ -139,10 +139,10 @@ function analyze(
   const noiseStart = noiseEnd - msToSamples(params.noiseSpanMs, sampleRate);
   const spectra: Float64Array[] = [];
   const hop = Math.max(1, Math.round(len / 4));
+  // magnitudeSpectrum returns a fresh array per call, so no copy is needed (D-109).
   for (let s = noiseStart; s + len <= noiseEnd; s += hop)
-    spectra.push(magnitudeSpectrum(samples, s, len, sampleRate, 2).mag.slice());
-  if (spectra.length === 0)
-    spectra.push(magnitudeSpectrum(samples, noiseStart, len, sampleRate, 2).mag.slice());
+    spectra.push(magnitudeSpectrum(samples, s, len, sampleRate, 2).mag);
+  if (spectra.length === 0) spectra.push(magnitudeSpectrum(samples, noiseStart, len, sampleRate, 2).mag);
   const envelope = new Float64Array(spec.mag.length).fill(Number.NaN);
   return { spec, noise: medianSpectrum(spectra), binHz: sampleRate / len, envelope };
 }

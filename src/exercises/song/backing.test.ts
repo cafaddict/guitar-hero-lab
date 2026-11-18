@@ -26,9 +26,15 @@ const fakeBacking: BackingRenderer = (chords, _pattern, bpm) => ({
 });
 
 /** s01 = D D A A ×4 at 60 BPM: a strum on every beat 1, scored as the bar's chord (set over [D, A]). */
-async function playS01(options: { earphones: boolean; bleedOnBeat3?: boolean; label?: string }) {
+async function playS01(options: {
+  earphones: boolean;
+  bleedOnBeat3?: boolean;
+  label?: string;
+  rttMs?: number;
+}) {
   const t = testContext();
-  if (options.label) t.ctx.calibration = { outputDeviceLabel: options.label, rttMs: 0 } as never;
+  if (options.label || options.rttMs)
+    t.ctx.calibration = { outputDeviceLabel: options.label ?? '', rttMs: options.rttMs ?? 0 } as never;
   const runner = new SongRunner(
     t.ctx,
     {
@@ -103,12 +109,28 @@ describe('S play-along (SPEC v1.1 §8.6)', () => {
     expect(t.mic.bleedRequests[0]!.arrivals).toHaveLength(3);
     const masked = t.mic.jobs.find((j) => j?.kind === 'songStrum' && j.backing !== undefined);
     expect(masked && masked.kind === 'songStrum' && masked.backing?.gain).toBe(t.mic.bleedGain);
+    // Mode C gets the backing reference (D-109): the buffer as played, arriving at its scheduled start + RTT.
+    const reference = masked?.kind === 'songStrum' ? masked.backing : undefined;
+    expect(reference?.samples).toBe(t.output.backings[0]!.samples);
+    expect(reference?.start).toBe(t.mic.captureSampleOf(t.output.backings[0]!.at));
+    expect(reference?.played).toBeUndefined();
     expect(runner.snapshot().view).toMatchObject({ backingAudible: true });
     runner.command('next');
     const result = songResultSchema.parse(runner.finish());
     // Beat-1 timing is still measured (the bleed on beat 3 never counts as a strum).
     expect(result).toMatchObject({ backingOn: true, backingAudible: true, beat1HitRate: 1, stops: 0 });
     expect(extractMetrics('S', result).some((m) => m.subjectKey === 'song:s01:chord')).toBe(false);
+  });
+
+  it('songStrum_speakerBackingWithRtt_referenceArrivesAtScheduledStartPlusRtt', async () => {
+    // Arrange / Act: speakers with a 30 ms round trip.
+    const { t } = await playS01({ earphones: false, rttMs: 30 });
+    // Assert: the buffer's first sample arrives on the same clock as the mask arrivals (D-109).
+    const job = t.mic.jobs.find((j) => j?.kind === 'songStrum' && j.backing !== undefined);
+    const backing = job?.kind === 'songStrum' ? job.backing : undefined;
+    expect(backing?.start).toBe(t.mic.captureSampleOf(t.output.backings[0]!.at + 0.03));
+    expect(backing?.start).toBe(backing?.arrivals[0]); // the fake backing's first event is at buffer time 0
+    expect(backing?.gain).toBe(t.mic.bleedGain);
   });
 
   it('B switches the backing and E the earphone confirmation before the start; the choice is remembered per output', () => {
